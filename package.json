@@ -1,0 +1,43 @@
+{
+  "name": "github-miner",
+  "version": "0.0.1",
+  "description": "A Node.js app for mining data from github",
+  "main": "index.js",
+  "scripts": {
+    "start": "nf start",
+    "reset": "script/reset",
+    "benchmark": "script/benchmark"
+  },
+  "author": "Ross Anthony <ross.anthony@acknowledgement.co.uk>",
+  "repository": "rossanthony/github-miner",
+  "license": "ISC",
+  "dependencies": {
+    "amqplib": "^0.2.1",
+    "async": "^2.0.1",
+    "bluebird": "^3.4.1",
+    "body-parser": "^1.5.0",
+    "colors": "^1.1.2",
+    "dotenv": "^2.0.0",
+    "elasticsearch": "^11.0.1",
+    "express": "^4.9.7",
+    "foreman": "^0.4.2",
+    "github": "^2.4.0",
+    "jackrabbit": "^2.3.0",
+    "jsonapi-server": "^1.15.4",
+    "lodash": "*",
+    "logfmt": "^1.1.2",
+    "mongoose": "~4.5.3",
+    "mongoose-cache": "~0.1.4",
+    "mongoose-timestamp": "^0.5.0",
+    "morgan": "^1.2.0",
+    "node-uuid": "^1.4.1",
+    "promise": "^5.0.0",
+    "q": "^1.4.1",
+    "superagent": "^0.18.2",
+    "throng": "^1.0.0"
+  },
+  "devDependencies": {},
+  "engines": {
+    "iojs": "1.0.x"
+  }
+}
