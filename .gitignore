@@ -5,4 +5,5 @@ Procfile
 npm-debug.log
 .DS_Store
 /logs
+/data
 *.log
