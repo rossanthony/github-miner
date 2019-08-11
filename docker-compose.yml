@@ -1,0 +1,19 @@
+version: '2'
+
+networks:
+  neo4j-network:
+    driver: bridge
+
+services:
+  neo4j:
+    image: bitnami/neo4j:latest
+    environment:
+      - NEO4J_PASSWORD=password
+    networks:
+      - neo4j-network
+    ports:
+      - '7474:7474'
+      - '7473:7473'
+      - '7687:7687'
+    volumes:
+      - ./data:/bitnami

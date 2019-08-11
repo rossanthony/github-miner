@@ -1,0 +1,155 @@
+{
+  "name": "kap",
+  "productName": "Kap",
+  "version": "3.0.0",
+  "description": "The best way to record your screen",
+  "license": "MIT",
+  "repository": "wulkano/kap",
+  "homepage": "https://getkap.co",
+  "author": {
+    "name": "Wulkano",
+    "email": "hello@wulkano.com",
+    "url": "https://wulkano.com"
+  },
+  "private": true,
+  "main": "main/index.js",
+  "scripts": {
+    "test": "xo",
+    "start": "yarn && electron .",
+    "build": "next build renderer && next export renderer",
+    "dist": "npm run build && build",
+    "pack": "npm run build && build --dir",
+    "postinstall": "electron-builder install-app-deps"
+  },
+  "bundle": {
+    "name": "Kap"
+  },
+  "dependencies": {
+    "@ffmpeg-installer/ffmpeg": "^1.0.19",
+    "@sentry/browser": "^5.5.0",
+    "@sentry/electron": "^0.17.1",
+    "@sindresorhus/do-not-disturb": "^1.1.0",
+    "@sindresorhus/to-milliseconds": "^1.2.0",
+    "ajv": "^6.10.1",
+    "aperture": "^5.2.0",
+    "base64-img": "^1.0.4",
+    "classnames": "^2.2.6",
+    "delay": "^4.3.0",
+    "electron-better-ipc": "^0.3.0",
+    "electron-log": "^3.0.6",
+    "electron-next": "^3.1.5",
+    "electron-store": "^4.0.0",
+    "electron-updater": "^4.0.14",
+    "electron-util": "^0.12.1",
+    "execa": "^2.0.3",
+    "file-icon": "^3.0.0",
+    "first-run": "^2.0.0",
+    "got": "^9.6.0",
+    "hide-desktop-icons": "^0.4.0",
+    "insight": "^0.10.3",
+    "lodash": "^4.17.10",
+    "mac-windows": "^0.7.1",
+    "macos-version": "^5.2.0",
+    "make-dir": "^3.0.0",
+    "moment": "^2.24.0",
+    "move-file": "^1.2.0",
+    "nearest-normal-aspect-ratio": "^1.2.1",
+    "node-mac-app-icon": "^1.4.0",
+    "npm": "^6.10.0",
+    "p-cancelable": "^2.0.0",
+    "p-event": "^4.1.0",
+    "pify": "^4.0.1",
+    "prop-types": "^15.7.2",
+    "react": "^16.8.6",
+    "react-dom": "^16.8.6",
+    "react-linkify": "^0.2.2",
+    "semver": "^6.2.0",
+    "tempy": "^0.3.0",
+    "tildify": "^2.0.0",
+    "tmp": "^0.1.0",
+    "unstated": "^1.2.0"
+  },
+  "devDependencies": {
+    "babel-eslint": "^10.0.2",
+    "electron": "5.0.4",
+    "electron-builder": "^20.44.4",
+    "eslint-config-xo-react": "^0.20.0",
+    "eslint-plugin-react": "^7.14.2",
+    "eslint-plugin-react-hooks": "^1.6.1",
+    "husky": "^3.0.0",
+    "next": "^8.1.0",
+    "xo": "^0.24.0"
+  },
+  "xo": {
+    "parser": "babel-eslint",
+    "extends": "xo-react",
+    "space": 2,
+    "envs": [
+      "node",
+      "browser"
+    ],
+    "rules": {
+      "import/no-extraneous-dependencies": "off",
+      "import/no-unassigned-import": "off",
+      "react/jsx-closing-tag-location": "off",
+      "react/require-default-props": "off",
+      "react/jsx-curly-brace-presence": "off",
+      "react/static-property-placement": "off",
+      "react/boolean-prop-naming": "off"
+    },
+    "ignores": [
+      "dist",
+      "renderer/.next",
+      "renderer/out"
+    ]
+  },
+  "husky": {
+    "hooks": {
+      "pre-commit": "npm test",
+      "pre-push": "npm test"
+    }
+  },
+  "build": {
+    "appId": "com.wulkano.kap",
+    "files": [
+      "**/*",
+      "!renderer",
+      "renderer/out"
+    ],
+    "mac": {
+      "electronUpdaterCompatibility": ">=2.16",
+      "category": "public.app-category.productivity",
+      "minimumSystemVersion": "10.12.0",
+      "darkModeSupport": true,
+      "extendInfo": {
+        "NSUserNotificationAlertStyle": "alert",
+        "CFBundleDocumentTypes": [
+          {
+            "CFBundleTypeName": "Video",
+            "CFBundleTypeRole": "Viewer",
+            "LSHandlerRank": "Alternate",
+            "LSItemContentTypes": [
+              "public.mpeg-4",
+              "com.apple.quicktime-movie"
+            ]
+          }
+        ]
+      }
+    },
+    "dmg": {
+      "iconSize": 160,
+      "contents": [
+        {
+          "x": 180,
+          "y": 170
+        },
+        {
+          "x": 480,
+          "y": 170,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
+    }
+  }
+}
