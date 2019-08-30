@@ -16,4 +16,4 @@ services:
       - '7473:7473'
       - '7687:7687'
     volumes:
-      - ./data:/bitnami
+      - ./neo4j:/bitnami

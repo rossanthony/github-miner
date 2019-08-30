@@ -13,13 +13,15 @@ export class GithubApiClient {
         return this.getRequest(url);
     }
 
-    public searchRepos(page: number = 1): Promise<any> {
+    public searchRepos(page: number = 1, perPage: number = 100, lastPushed: string = '>=2019-01-01'): Promise<any> {
         const url = 'https://api.github.com/search/repositories'
-            + '?q=language:javascript+forks:>=1+pushed:>2019-01-01'
-            + '&sort=pushed'
-            + '&order=desc'
-            + '&per_page=100'
+            + '?q=language:javascript+forks:>=250+pushed:2018-01-01..2019-01-01' //+ lastPushed
+            + '&sort=forks'
+            + '&order=asc'
+            + '&per_page=' + perPage
             + '&page=' + page;
+
+        console.log('fetching from github api:', url);
 
         return this.getRequest(url);
     }
@@ -33,14 +35,32 @@ export class GithubApiClient {
             'cache-control': 'no-cache',
             'accept-encoding': 'application/json',
         };
+        const config = {
+            headers,
+            timeout: 10000,
+            json: true,
+        };
 
         return new Promise((resolve, reject): void => {
-            request.get(url, {timeout: 10000, headers}, (error: Error, response: Response, body: any) => {
+            request.get(url, config, (error: Error, response: Response, body: any) => {
                 if (error) {
                     reject(error);
                     return;
                 }
+                if (response.statusCode === 403) {
+                    resolve({
+                        headers: response.headers,
+                        status: response.statusCode,
+                    });
+                    return;
+                }
                 if (response.statusCode !== 200) {
+                    console.log('Error from github API', {
+                        headers: response.headers,
+                        status: response.statusCode,
+                        url,
+                        body,
+                    })
                     reject(new Error(`Invalid status code: ${response.statusCode}, url: ${url}`));
                     return;
                 }
@@ -48,11 +68,11 @@ export class GithubApiClient {
                     reject(new Error(`Response body from github API is empty!`));
                     return;
                 }
-                try {
-                    resolve(JSON.parse(body));    
-                } catch (error) {
-                    reject(error);
-                }
+                resolve({
+                    body,
+                    headers: response.headers,
+                    status: response.statusCode,
+                });
             });
         });
     }

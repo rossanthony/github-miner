@@ -6,7 +6,8 @@
   "scripts": {
     "start": "nf start",
     "reset": "script/reset",
-    "mine": "ts-node src/miner.ts"
+    "mine": "ts-node src/miner.ts",
+    "insert": "ts-node src/insertData.ts"
   },
   "author": "Ross Anthony <rantho01@mail.bbk.ac.uk>",
   "repository": "rossanthony/github-miner",
@@ -18,6 +19,7 @@
     "elasticsearch": "^11.0.1",
     "express": "^4.9.7",
     "foreman": "^0.4.2",
+    "fs-extra": "^8.1.0",
     "lodash": "*",
     "logfmt": "^1.1.2",
     "moment": "^2.14.1",
@@ -25,12 +27,14 @@
     "neo4j": "^1.1.1",
     "neo4j-driver": "^1.7.5",
     "node-uuid": "^1.4.1",
+    "ora": "^3.4.0",
     "read-package-json": "^2.0.13",
     "request": "^2.88.0",
     "shelljs": "^0.8.3",
     "throng": "^1.0.0"
   },
   "devDependencies": {
+    "@types/lodash": "^4.14.136",
     "@types/node": "^12.6.2",
     "@types/request": "^2.48.2",
     "@typescript-eslint/eslint-plugin": "^1.12.0",
