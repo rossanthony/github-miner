@@ -10,10 +10,11 @@
     "insert": "ts-node src/insertData.ts",
     "total-repos": "find ./data/repos/* github.json -maxdepth 1 -type d | wc -l",
     "total-modules": "find ./data/repos/* package.json -maxdepth 1 -type d | wc -l",
-    "test": "jest --forceExit --coverage --verbose",
+    "unit-tests": "jest --forceExit --coverage --verbose --detectOpenHandles",
     "clean": "rm -rf ./node_modules && rm -rf ./build",
     "compile": "tsc",
-    "compile-watch": "tsc -w"
+    "compile-watch": "tsc -w",
+    "lint": "eslint ./src/**/*.ts"
   },
   "author": "Ross Anthony <rantho01@mail.bbk.ac.uk>",
   "repository": "rossanthony/github-miner",
@@ -32,17 +33,26 @@
     "shelljs": "^0.8.3"
   },
   "devDependencies": {
+    "@types/dotenv": "^6.1.1",
+    "@types/fs-extra": "^8.0.0",
     "@types/jest": "^24.0.18",
     "@types/lodash": "^4.14.136",
-    "@types/node": "^12.6.2",
+    "@types/moment": "^2.13.0",
+    "@types/node": "^12.7.4",
     "@types/request": "^2.48.2",
+    "@types/shelljs": "^0.8.5",
     "@typescript-eslint/eslint-plugin": "^1.12.0",
     "@typescript-eslint/parser": "^1.12.0",
     "eslint": "^5.16.0",
     "jest": "^24.9.0",
+    "nock": "^11.3.3",
     "ts-jest": "^24.0.2",
     "ts-node": "^8.3.0",
     "typescript": "^3.6.2"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "verbose": true
   },
   "engines": {
     "node": ">=10.13.0"

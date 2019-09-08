@@ -7,4 +7,6 @@ npm-debug.log
 /logs
 /data
 /neo4j
+/coverage
+/dist
 *.log
