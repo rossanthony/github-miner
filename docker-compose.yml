@@ -1,19 +1,32 @@
-version: '2'
-
-networks:
-  neo4j-network:
-    driver: bridge
+version: '3.5'
 
 services:
+  node:
+    image: node:10.16.0
+    command: npm run total-repos
+    volumes: 
+      - ./:/app
+    working_dir: /app
+    networks:
+      - github-miner-network
+    depends_on:
+      - neo4j
+
   neo4j:
     image: bitnami/neo4j:latest
     environment:
       - NEO4J_PASSWORD=password
+      - NEO4J_apoc_export_file_enabled=true
+      - NEO4J_apoc_import_file_use__neo4j__config=true
     networks:
-      - neo4j-network
+      - github-miner-network
     ports:
       - '7474:7474'
       - '7473:7473'
       - '7687:7687'
     volumes:
       - ./neo4j:/bitnami
+
+networks:
+  github-miner-network:
+    driver: bridge
