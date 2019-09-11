@@ -10,3 +10,4 @@ npm-debug.log
 /coverage
 /dist
 *.log
+dump.rdb
