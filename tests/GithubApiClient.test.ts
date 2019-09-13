@@ -1,6 +1,4 @@
 import { GithubApiClient } from '../src/GithubApiClient';
-import * as request from 'request';
-import { Request, Response, RequestAPI, CoreOptions, UriOptions } from 'request';
 import nock from 'nock';
 
 describe('GithubApiClient public methods', () => {

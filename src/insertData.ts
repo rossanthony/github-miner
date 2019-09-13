@@ -140,7 +140,7 @@ const insertData = async () => {
             i++;
             const record = await neo4jClient.getGitRepo(repo);
             if (!record) {
-                const record = await neo4jClient.saveGitRepo(gitHubJson);
+                await neo4jClient.saveGitRepoAndUser(gitHubJson);
                 console.log(`record saved for ${repo}`, JSON.stringify(record, null, 2));
             } else {
                 console.log(`record exists for ${repo}`, JSON.stringify(record, null, 2));

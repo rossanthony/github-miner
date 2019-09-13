@@ -1,10 +1,13 @@
 import { Driver, Session, Record, StatementResult } from 'neo4j-driver/types/v1';
-import * as _ from 'lodash';
+import _ from 'lodash';
+import { exec, ExecFunction } from 'shelljs';
+
 
 export class Neo4jClient {
     constructor(
         private readonly driver: Driver,
         private readonly session: Session,
+        private readonly shellExec: ExecFunction = exec,
     ) {}
 
     public async getNodeModule(name: string): Promise<Record | null> {
@@ -34,7 +37,7 @@ export class Neo4jClient {
             : null;
     }
 
-    public async saveGitRepo(data: any): Promise<Record | null> {
+    public async saveGitRepoAndUser(gitHubJson: any): Promise<void> {
         const fieldsToSave = [
             'name',
             'ownerUsername',
@@ -49,37 +52,32 @@ export class Neo4jClient {
         ];
         const fields = fieldsToSave.map((field: string) => `${field}: $${field}`).join(',');
         const dataToSave = {
-            name: data.name,
-            ownerUsername: data.owner.login,
-            size: data.size,
-            stargazers: data.stargazers_count,
-            watchers: data.watchers_count,
-            forks: data.forks_count,
-            openIssues: data.open_issues_count,
-            createdAt: data.created_at,
-            updatedAt: data.updated_at,
-            pushedAt: data.pushed_at,
+            name: gitHubJson.name,
+            ownerUsername: gitHubJson.owner.login,
+            size: gitHubJson.size,
+            stargazers: gitHubJson.stargazers_count,
+            watchers: gitHubJson.watchers_count,
+            forks: gitHubJson.forks_count,
+            openIssues: gitHubJson.open_issues_count,
+            createdAt: gitHubJson.created_at,
+            updatedAt: gitHubJson.updated_at,
+            pushedAt: gitHubJson.pushed_at,
         };
 
-        const name = _.snakeCase(data.name);
+        const name = _.snakeCase(gitHubJson.name);
         const query = `CREATE (_${name}:GitRepo {${fields}}) RETURN _${name}`;
 
         console.log('Saving GitRepo to neo4j...', {
             query, dataToSave,
         });
 
-        const resultPromise: StatementResult = await this.session.run(query, dataToSave);
-
-        const owner = await this.saveGitUser(data.owner, data.name);
+        await this.session.run(query, dataToSave);
+        const owner = await this.saveGitUser(gitHubJson.owner, gitHubJson.name);
 
         console.log('Saved owner:', owner);
-
-        return resultPromise.records && resultPromise.records.length > 0
-            ? resultPromise.records[0]
-            : null;
     }
 
-    public async saveGitUser(user: any, repoName: string): Promise<any> {
+    public async saveGitUser(user: any, repoName: string): Promise<void> {
         let query;
         let existingUser = await this.getGitUser(user.login);
 
@@ -96,40 +94,39 @@ export class Neo4jClient {
 
             const name = _.snakeCase(user.login);
 
-            query = `CREATE (_${name}:GitUser {${fields}})\n`;
+            query = `CREATE (_${name}:GitUser {${fields}})`;
 
             console.log('Saving GitUser to neo4j...', {query, dataToSave});
-            
-            const resultPromise: StatementResult = await this.session.run(query, dataToSave);
 
-            existingUser = resultPromise.records && resultPromise.records.length > 0
-                ? resultPromise.records[0]
-                : null;
+            await this.session.run(query, dataToSave);
         }
 
-        query = `MATCH (a:GitUser {username:'${user.login}'}), (b:GitRepo {name:'${repoName}'})
-                CREATE (a)-[:OWNS]->(b)`;
+        query = `MATCH (a:GitUser {username:'${user.login}'}), (b:GitRepo {name:'${repoName}'})\nCREATE (a)-[:OWNS]->(b)`;
 
         console.log('Saving relationship to neo4j...', {query});
 
         const relationshipResult: StatementResult = await this.session.run(query);
 
         console.log('relationshipResult >>>', JSON.stringify(relationshipResult, null, 2));
-        
-        return existingUser;
     }
 
-    public async saveNodeModules(repo: any, packageJson: any): Promise<any> {
+    public async saveNodeModules(repo: string, packageJson: any): Promise<void> {
         console.log('packageJson >>>', packageJson);
+        let npmJson: any;
+        try {
+            const npmMeta = this.shellExec(`npm view -json ${repo}`, { silent: true });
+            console.log('npmMeta >', npmMeta);
+            npmJson = JSON.parse(npmMeta);
+        } catch (error) {
+            console.log('npm cli lookup failed:', error);
+        }
+        console.log('npmJson >', npmJson);
 
-        // only run this if git repo itself is a node module hosted on npm...
-
-        // let existingModule = await this.getNodeModule(packageJson.name);
-
-        // if (!existingModule) {
-        //     console.log('adding new NodeModule record for >>>', repo);
-        //     await this.saveNodeModule(packageJson, repo);
-        // }
+        if (npmJson && !npmJson.error && npmJson.name) {
+            // only run this if git repo itself is a node module hosted on npm...
+            console.log('adding new NodeModule record for >>>', repo);
+            await this.saveNodeModule(npmJson, repo);
+        }
 
         for (let dependency in packageJson.dependencies) {
             console.log('dependency >>>', dependency);
@@ -138,9 +135,9 @@ export class Neo4jClient {
         }
     }
 
-    public async saveNodeModule(
+    private async saveNodeModule(
         packageJson: any,
-        dependencyOfGitRepo?: string,
+        dependencyOfGitRepo: string,
         version?: string,
     ): Promise<any> {
         console.log('packageJson >>>', packageJson);
@@ -148,17 +145,19 @@ export class Neo4jClient {
         let query;
         let existingModule = await this.getNodeModule(packageJson.name);
 
-        if (!existingModule && dependencyOfGitRepo) {
+        console.log('existingModule', existingModule);
+
+        if (!existingModule) {
             console.log('adding new NodeModule record for >>>', dependencyOfGitRepo);
             const name = _.snakeCase(packageJson.name);
-            query = `CREATE (_${name}:NodeModule {name: '${packageJson.name}'})\n`;
+            query = `CREATE (_${name}:NodeModule {name: '${packageJson.name}'})`;
             console.log('Saving NodeModule to neo4j...', {query});
             await this.session.run(query);
         }
 
-        if (dependencyOfGitRepo && version) {
-            query = `MATCH (a:GitRepo {name:'${dependencyOfGitRepo}'}), (b:NodeModule {name:'${packageJson.name}'})
-                    CREATE (a)-[:DEPENDS_ON {version:'${version}'}]->(b)`;
+        if (version) {
+            query = `MATCH (a:GitRepo {name:'${dependencyOfGitRepo}'}), (b:NodeModule {name:'${packageJson.name}'})\n`
+                  + `CREATE (a)-[:DEPENDS_ON {version:'${version}'}]->(b)`;
 
             console.log('Saving relationship to neo4j...', {query});
 
@@ -166,7 +165,5 @@ export class Neo4jClient {
 
             console.log('relationshipResult >>>', JSON.stringify(relationshipResult, null, 2));
         }
-
-        return existingModule;
     }
 }
