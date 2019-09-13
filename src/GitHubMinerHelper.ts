@@ -21,9 +21,7 @@ export class GitHubMinerHelper {
     constructor(
         private githubApiClient: GithubApiClient,
         private redisService: RedisService,
-    ) {
-        // redisService.del('github-repos');
-    }
+    ) {}
 
     public async mineGithubForPackageJsons(
         page: number = 1,
@@ -64,30 +62,21 @@ export class GitHubMinerHelper {
             console.log('\n\n***** OVER 1000 RESULTS RETURNED! *****\n\n')
         }
 
-        // console.log('githubResults > total >', githubResults.body.total_count);
-        // console.log('githubResults > items.length >', githubResults.body.items.length);
-        
-        const promises = githubResults.body.items.map(async (item: any) => {
-            // console.log('forks >>>', item.forks_count);
-
-            const existsInCache: number = await this.redisService.sismember('github-repos', item.full_name);
-
-            if (existsInCache === 0) {
+        await Promise.all(githubResults.body.items.map(async (item: any) => {
+            if (await this.redisService.sismember('github-repos', item.full_name)) {
                 // already set in cache
-                // console.log(`existsInCache >>> ${item.full_name}`, existsInCache);
+                console.log(`existsInCache >>> ${item.full_name}`);
                 return;
             } else {
-                // console.log(`not in cache >>> ${item.full_name}`);
+                console.log(`not in cache >>> ${item.full_name}`);
             }
-
-            // console.log(`first time >>> ${item.owner.login}/${item.name}`);
 
             const filePath = `${__dirname}/../data/repos/${item.owner.login}/${item.name}`;
             const packageJsonFile = await fs.readFile(`${filePath}/package.json`, 'utf8').catch(() => null);
             const gitHubFile = await fs.readFile(`${filePath}/github.json`, 'utf8').catch(() => null);
 
             if (packageJsonFile && gitHubFile) {
-                // console.log('Files already exist in:', filePath);
+                console.log('Files already exist in:', filePath, `adding ${item.full_name} to cache`);
                 await this.redisService.sadd('github-repos', item.full_name);
                 return;
             }
@@ -96,9 +85,7 @@ export class GitHubMinerHelper {
             if (fileSaved) {
                 await fs.outputFile(`${filePath}/github.json`, JSON.stringify(item, null, 2));
             }
-        });
-
-        await Promise.all(promises);
+        }));
 
         return result;
     }

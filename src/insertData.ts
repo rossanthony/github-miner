@@ -6,8 +6,12 @@ import { GithubApiClient } from './GithubApiClient';
 import { GitHubMinerHelper } from './GitHubMinerHelper';
 
 const spinner = ora('Initialising...').start();
-
 const insertDataHelper = new InsertDataHelper(spinner);
+
+if (process.env.LOG_LEVEL !== 'verbose') {
+    // disable verbose logs by default, unless expicitly enabled in .env
+    console.log = (): null => null;
+}
 
 let username = '';
 if (process.argv.length > 2) {
@@ -35,7 +39,7 @@ if (username && repo) {
             await gitHubMinerHelper.fetchGithubDataForRepo(username, repo);
 
             insertDataHelper.insertDataForRepo(username, repo)
-                .catch((e) => console.log('Error caught', e))
+                .catch((e: Error) => console.log('Error caught', e))
                 .finally(() => {
                     spinner.text = 'Done.';
                     process.exit(0);

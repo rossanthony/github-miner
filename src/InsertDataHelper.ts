@@ -39,9 +39,10 @@ export class InsertDataHelper {
         // const record = await neo4jClient.getNodeModule('123');
         // console.log('record', JSON.stringify(record, null, 2));
     
-        let i = 0;
-        let found = 0;
-        let foundArr: string[] = [];
+        let usersCount = 1;
+        let reposTotalCount = 1;
+        // let found = 0;
+        // let foundArr: string[] = [];
     
         for (let username of users) {
             if (username === '.DS_Store') {
@@ -49,21 +50,19 @@ export class InsertDataHelper {
             }
     
             const repos: string[] = fs.readdirSync(`./data/repos/${username}`);
-            // console.log(`./data/repos/${username}`, repos);
+            console.log(`./data/repos/${username}`, repos);
     
+            let reposCount = 1;
             for (let repo of repos) {
                 if (repo === '.DS_Store') {
                     continue;
                 }
+                this._spinner.text = `Processing ${username}/${repo}\n[user ${usersCount} of ${users.length} | repo ${reposCount} of ${repos.length} | total repos inserted: ${reposTotalCount}]`;
                 await this.insertDataForRepo(username, repo);
-                i++;
-                // if (i > 500) {
-                //     break;
-                // }
+                reposCount++;
+                reposTotalCount++;
             }
-            // if (i > 500) {
-            //     break;
-            // }
+            usersCount++;
         }
 
         // close neo4j connection on exit:
@@ -73,17 +72,14 @@ export class InsertDataHelper {
     }
 
     public async insertDataForRepo(username: string, repo: string): Promise<void> {
-        const saveToCache = await this._redisService.sadd('github-repos-inserted', `${username}/${repo}`);
-        const alreadyExistsInCache = (saveToCache === 0);
-        if (alreadyExistsInCache) {
-            // console.log(`${repo} exists is cache, skipping...`)
-            // return;
+        if (await this._redisService.sismember('github-repos-inserted', `${username}/${repo}`)) {
+            console.log(`${repo} exists is cache, skipping...`)
+            return;
         } else {
-            console.log(`${repo} did not exist is cache`)
+            console.log(`${repo} does not exist is cache`)
         }
 
         const filePath = `./data/repos/${username}/${repo}/github.json`;
-        this._spinner.text = `Processing ./data/repos/${username}/${repo}/github.json`;
         const fileContents: string|null = await fs.readFile(filePath, 'utf8').catch(() => null);
 
         if (!fileContents) {
@@ -99,16 +95,15 @@ export class InsertDataHelper {
             return;
         }
 
-        // console.log(`${username}/${repo}/github.json`, JSON.stringify(gitHubJson, null, 2));
+        console.log(`${username}/${repo}/github.json`, JSON.stringify(gitHubJson, null, 2));
 
         const record = await this._neo4jClient.getGitRepo(gitHubJson.full_name);
         if (!record) {
-            await this._neo4jClient.saveGitRepo(gitHubJson);
+            await this._neo4jClient.saveGitRepoAndUser(gitHubJson);
         }
 
         const packageJson = await this.parsePackageJson(username, repo);
         if (packageJson) {
-            this._spinner.text = `Saving dependencies for ${gitHubJson.full_name}`;
             await this._neo4jClient.saveNodeModulesUsedByGitRepo(gitHubJson.full_name, packageJson);
         }
     }
@@ -121,14 +116,7 @@ export class InsertDataHelper {
         } catch (error) {
             console.error("There was an error reading/parsing", `./data/repos/${username}/${repo}/package.json`)
         }
-    
-        // if (data.name !== repo) {
-        //     console.log('\nnames do not match!!!\n', {
-        //         repo,
-        //         name: data.name,
-        //     });
-        // }
-    
+
         return {
             username,
             repo,

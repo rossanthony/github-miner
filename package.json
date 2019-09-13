@@ -12,6 +12,7 @@
     "install-neo4j-plugins": "docker-compose exec neo4j sh -c './app/bin/install_neo4j_plugins.sh'",
     "backup-db": "docker-compose exec neo4j sh -c 'neo4j stop && neo4j-admin dump --database=graph.db --to=/bitnami/backups/graph.db.dump && neo4j start'",
     "restore-db": "docker-compose exec neo4j sh -c 'neo4j stop && neo4j-admin load --from=/bitnami/backups/graph.db.dump --database=graph.db --force && neo4j start'",
+    "redis-flush": "docker-compose exec redis sh -c 'redis-cli FLUSHALL'",
     "mine": "ts-node src/miner.ts",
     "insert": "ts-node src/insertData.ts",
     "total-repos": "find ./data/repos/* -name 'github.json' | wc -l",
@@ -32,8 +33,7 @@
     "npm-api": "^1.0.0",
     "ora": "^3.4.0",
     "redis": "^2.8.0",
-    "request": "^2.88.0",
-    "shelljs": "^0.8.3"
+    "request": "^2.88.0"
   },
   "devDependencies": {
     "@types/dotenv": "^6.1.1",
@@ -41,6 +41,7 @@
     "@types/jest": "^24.0.18",
     "@types/lodash": "^4.14.136",
     "@types/moment": "^2.13.0",
+    "@types/neo4j": "^2.0.2",
     "@types/node": "^12.7.4",
     "@types/redis": "^2.8.13",
     "@types/request": "^2.48.2",
