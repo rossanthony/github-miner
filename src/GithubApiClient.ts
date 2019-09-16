@@ -9,7 +9,8 @@ export class GithubApiClient {
 
     constructor(
         private readonly githubBaseUrl: string = process.env.GITHUB_API_BASE_URL,
-        private readonly githubToken: string = process.env.GITHUB_TOKEN,
+        private readonly githubClientId: string = process.env.GITHUB_CLIENT_ID,
+        private readonly githubClientSecret: string = process.env.GITHUB_CLIENT_SECRET,
         private readonly githubUsername: string = process.env.GITHUB_USERNAME,
         private readonly timeout: number = 10000,
     ) {
@@ -17,40 +18,42 @@ export class GithubApiClient {
             baseUrl: this.githubBaseUrl,
             timeout: this.timeout,
             json: true,
+            qs: {
+                per_page: 100, // 100 results per API call is the max
+                sort: 'forks',
+                order: 'asc',
+                client_id: this.githubClientId,
+                client_secret: this.githubClientSecret,
+            },
+            qsStringifyOptions: {
+                format : 'RFC1738',
+            },
             headers: {
                 accept: 'application/json',
                 host: 'api.github.com',
-                authorization: this.githubToken,
                 'user-agent': this.githubUsername,
                 'cache-control': 'no-cache',
                 'accept-encoding': 'application/json',
-            }
+            },
         });
     }
 
-    public searchCode(page: number = 1): Promise<any> {
-        const url = '/search/code?'
-            + 'q=dependencies+filename:package.json+path:/'
-            + '&per_page=100'
-            + '&page=' + page
-            
-        return this.getRequest(url);
+    public searchRepos(page: number = 1, lastPushed: string = '>=2019-01-01', forks: string = '>=100'): Promise<any> {
+        return this.getRequest('/search/repositories', {
+            q: `language:javascript forks:${forks} pushed:${lastPushed}`,
+            page,
+        });
     }
 
-    public searchRepos(page: number = 1, lastPushed: string = '>=2019-01-01'): Promise<any> {
-        const url = '/search/repositories?'
-            + 'per_page=100'
-            + '&sort=forks'
-            + '&order=asc'
-            + '&q=language:javascript+forks:>=50+pushed:' + lastPushed
-            + '&page=' + page;
-
-        return this.getRequest(url);
+    public async getRepo(username: string, repo: string): Promise<any> {
+        const response = await this.getRequest(`/repos/${username}/${repo}`);
+        return response.body;
     }
 
-    private getRequest(url: string): Promise<any> {
+    private getRequest(url: string, qs: any = {}): Promise<any> {
+        // url += `&client_id=${this.githubClientId}&client_secret=${this.githubClientSecret}`;
         return new Promise((resolve, reject): void => {
-            this._request.get(url, (error: Error, response: Response, body: any) => {
+            this._request.get(url, {qs}, (error: Error, response: Response, body: any) => {
                 if (error) {
                     return reject(error);
                 }
