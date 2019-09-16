@@ -38,10 +38,15 @@ if (username && repo) {
         .then(async () => {
             await gitHubMinerHelper.fetchGithubDataForRepo(username, repo);
 
-            insertDataHelper.insertDataForRepo(username, repo)
+            await insertDataHelper.insertDataForRepo(username, repo)
                 .catch((e: Error) => console.log('Error caught', e))
                 .finally(() => {
-                    spinner.text = 'Done.';
+                    process.stdout.write('Done.\n\n'
+                        + `Try opening http://localhost:7474 and running the following cypher query:\n\n`
+                        + `MATCH (repo:GitRepo {\n`
+                        + `   full_name:'${username}/${repo}'}\n`
+                        + `)-[:DEPENDS_ON*]->(n)\n`
+                        + `RETURN repo, n\n\n`);
                     process.exit(0);
                 });
         });

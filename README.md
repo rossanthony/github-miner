@@ -39,7 +39,10 @@ npm run insert rossanthony github-miner
 ```
 Once this has run and imported the data, it is possible to run a cypher query like the example below:
 ```
-MATCH (n1:GitRepo {full_name:'rossanthony/github-miner'})-[:DEPENDS_ON*]->(n) RETURN n
+MATCH (repo:GitRepo {
+	full_name:'rossanthony/github-miner'}
+)-[:DEPENDS_ON*]->(dependencies)
+RETURN repo, dependencies
 ```
 This should return all node_modules (direct imports and sub-dependencies) of the project.
 
