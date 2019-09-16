@@ -1,33 +1,47 @@
-import * as shell from 'shelljs';
 import * as fs from 'fs-extra';
 import { get } from 'lodash'; 
 import { Driver } from 'neo4j-driver/types/v1';
 import { v1 as neo4j } from 'neo4j-driver';
 import { Neo4jClient } from './Neo4jClient';
+import { RedisService } from './RedisService';
+import redis from 'redis';
+import { Ora } from 'ora';
 
 export class InsertDataHelper {
     private _neo4jClient: Neo4jClient;
     private _driver: Driver;
+    private _redisService: RedisService;
 
-    constructor() {
+    constructor(
+        private _spinner: Ora,
+    ) {
         this._driver = neo4j.driver(
             'bolt://localhost:7687',
             neo4j.auth.basic('neo4j', 'password')
         );
+        this._redisService = new RedisService(
+            redis.createClient({
+                host: process.env.REDIS_HOST || '127.0.0.1',
+                port: +process.env.REDIS_PORT || 6379,
+            }),
+        );
         this._neo4jClient = new Neo4jClient(
             this._driver,
             this._driver.session(),
+            this._redisService,
         );
     }
 
     public async insertData(): Promise<void> {
         const users: string[] = fs.readdirSync('./data/repos/');
-        console.log('folder count in in /data/repos', users.length);
+        // console.log('folder count in in /data/repos', users.length);
     
         // const record = await neo4jClient.getNodeModule('123');
         // console.log('record', JSON.stringify(record, null, 2));
     
         let i = 0;
+        let found = 0;
+        let foundArr: string[] = [];
     
         for (let username of users) {
             if (username === '.DS_Store') {
@@ -35,44 +49,14 @@ export class InsertDataHelper {
             }
     
             const repos: string[] = fs.readdirSync(`./data/repos/${username}`);
-            console.log(`./data/repos/${username}`, repos);
+            // console.log(`./data/repos/${username}`, repos);
     
             for (let repo of repos) {
                 if (repo === '.DS_Store') {
                     continue;
                 }
-    
-                const filePath = `./data/repos/${username}/${repo}/github.json`;
-                const fileContents: string|null = await fs.readFile(filePath, 'utf8').catch(() => null);
-    
-                if (!fileContents) {
-                    console.log('no file found:', filePath);
-                    continue;
-                }
-    
-                let gitHubJson: any;
-                try {
-                    gitHubJson = JSON.parse(fileContents);
-                } catch (error) {
-                    console.log('unable to parse json in:', filePath);
-                    continue;
-                }
-    
-                // console.log(`${username}/${repo}/github.json`, JSON.stringify(gitHubJson, null, 2));
-    
+                await this.insertDataForRepo(username, repo);
                 i++;
-                const record = await this._neo4jClient.getGitRepo(repo);
-                if (!record) {
-                    const record = await this._neo4jClient.saveGitRepo(gitHubJson);
-                    console.log(`record saved for ${repo}`, JSON.stringify(record, null, 2));
-                } else {
-                    console.log(`record exists for ${repo}`, JSON.stringify(record, null, 2));
-                }
-    
-                const { packageJson, npmData } = await this.parsePackageJson(username, repo);
-                if (packageJson) {
-                    await this._neo4jClient.saveNodeModules(repo, packageJson, npmData);
-                }
                 // if (i > 500) {
                 //     break;
                 // }
@@ -81,14 +65,55 @@ export class InsertDataHelper {
             //     break;
             // }
         }
-    
+
         // close neo4j connection on exit:
         this._neo4jClient.close();
 
         return Promise.resolve();
     }
 
-    private async parsePackageJson(username: string, repo: string): Promise<{ packageJson: any; npmData: any }> {
+    public async insertDataForRepo(username: string, repo: string): Promise<void> {
+        const saveToCache = await this._redisService.sadd('github-repos-inserted', `${username}/${repo}`);
+        const alreadyExistsInCache = (saveToCache === 0);
+        if (alreadyExistsInCache) {
+            // console.log(`${repo} exists is cache, skipping...`)
+            // return;
+        } else {
+            console.log(`${repo} did not exist is cache`)
+        }
+
+        const filePath = `./data/repos/${username}/${repo}/github.json`;
+        this._spinner.text = `Processing ./data/repos/${username}/${repo}/github.json`;
+        const fileContents: string|null = await fs.readFile(filePath, 'utf8').catch(() => null);
+
+        if (!fileContents) {
+            console.log('ERROR: no file found:', filePath);
+            return;
+        }
+
+        let gitHubJson: any;
+        try {
+            gitHubJson = JSON.parse(fileContents);
+        } catch (error) {
+            console.log('ERROR: unable to parse json in:', filePath);
+            return;
+        }
+
+        // console.log(`${username}/${repo}/github.json`, JSON.stringify(gitHubJson, null, 2));
+
+        const record = await this._neo4jClient.getGitRepo(gitHubJson.full_name);
+        if (!record) {
+            await this._neo4jClient.saveGitRepo(gitHubJson);
+        }
+
+        const packageJson = await this.parsePackageJson(username, repo);
+        if (packageJson) {
+            this._spinner.text = `Saving dependencies for ${gitHubJson.full_name}`;
+            await this._neo4jClient.saveNodeModulesUsedByGitRepo(gitHubJson.full_name, packageJson);
+        }
+    }
+
+    private async parsePackageJson(username: string, repo: string): Promise<any> {
         let data: any;
         try {
             const rawJsonFileContents = await fs.readFile(`./data/repos/${username}/${repo}/package.json`, 'utf8');
@@ -97,22 +122,14 @@ export class InsertDataHelper {
             console.error("There was an error reading/parsing", `./data/repos/${username}/${repo}/package.json`)
         }
     
-        let npm: any;
-        try {
-            const output = shell.exec(`npm view -json ${repo}`, {silent:true});
-            npm = JSON.parse(output)
-        } catch (error) {
-            console.error(`There was an error reading/parsing npm data for: ${repo}`);
-        }
+        // if (data.name !== repo) {
+        //     console.log('\nnames do not match!!!\n', {
+        //         repo,
+        //         name: data.name,
+        //     });
+        // }
     
-        if (data.name !== repo) {
-            console.log('\nnames do not match!!!\n', {
-                repo,
-                name: data.name,
-            });
-        }
-    
-        const packageJson = {
+        return {
             username,
             repo,
             name: data.name,
@@ -129,8 +146,5 @@ export class InsertDataHelper {
             keywords: data.keywords,
             engines: data.engines,
         };
-        const npmData = !npm.error ? npm : undefined;
-    
-        return { packageJson, npmData };
     }
 }
