@@ -2,31 +2,34 @@
   "name": "github-miner",
   "version": "0.0.2",
   "description": "A Node.js app for mining data from github/npm and plotting into a Neo4j graph database.",
+  "author": "Ross Anthony <rantho01@mail.bbk.ac.uk>",
+  "repository": "rossanthony/github-miner",
+  "license": "MIT",
   "main": "index.js",
   "scripts": {
     "docker-setup": "docker-compose run --use-aliases --rm node npm install",
     "docker-exec": "docker-compose run --use-aliases --rm node npm run",
+    "install-neo4j-plugins": "docker-compose exec neo4j sh -c './app/bin/install_neo4j_plugins.sh'",
+    "backup-db": "docker-compose exec neo4j sh -c 'neo4j stop && neo4j-admin dump --database=graph.db --to=/bitnami/backups/graph.db.dump && neo4j start'",
+    "restore-db": "docker-compose exec neo4j sh -c 'neo4j stop && neo4j-admin load --from=/bitnami/backups/graph.db.dump --database=graph.db --force && neo4j start'",
     "mine": "ts-node src/miner.ts",
     "insert": "ts-node src/insertData.ts",
-    "total-repos": "find ./data/repos/* github.json -maxdepth 1 -type d | wc -l",
-    "total-modules": "find ./data/repos/* package.json -maxdepth 1 -type d | wc -l",
+    "total-repos": "find ./data/repos/* -name 'github.json' | wc -l",
+    "total-modules": "find ./data/npm* -name 'data.json' | wc -l",
     "unit-tests": "jest --forceExit --coverage --verbose --detectOpenHandles",
     "clean": "rm -rf ./node_modules && rm -rf ./build",
     "compile": "tsc",
     "compile-watch": "tsc -w",
     "lint": "eslint ./src/**/*.ts"
   },
-  "author": "Ross Anthony <rantho01@mail.bbk.ac.uk>",
-  "repository": "rossanthony/github-miner",
-  "license": "MIT",
   "dependencies": {
     "dotenv": "^2.0.0",
-    "express": "^4.9.7",
     "fs-extra": "^8.1.0",
     "lodash": "^4.17.15",
     "moment": "^2.14.1",
     "neo4j": "^1.1.1",
     "neo4j-driver": "^1.7.5",
+    "npm-api": "^1.0.0",
     "ora": "^3.4.0",
     "redis": "^2.8.0",
     "request": "^2.88.0",
@@ -41,10 +44,10 @@
     "@types/node": "^12.7.4",
     "@types/redis": "^2.8.13",
     "@types/request": "^2.48.2",
-    "@types/shelljs": "^0.8.5",
     "@typescript-eslint/eslint-plugin": "^1.12.0",
     "@typescript-eslint/parser": "^1.12.0",
     "eslint": "^5.16.0",
+    "husky": "^3.0.5",
     "jest": "^24.9.0",
     "nock": "^11.3.3",
     "ts-jest": "^24.0.2",
@@ -56,6 +59,6 @@
     "verbose": true
   },
   "engines": {
-    "node": ">=10.13.0"
+    "node": ">=10.*"
   }
 }

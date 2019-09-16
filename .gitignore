@@ -1,13 +1,12 @@
 .idea
 node_modules
 .env
-Procfile
-npm-debug.log
 .DS_Store
 /logs
 /data
-/neo4j
+!/data/backups
 /coverage
 /dist
 *.log
 dump.rdb
+*.ipynb
