@@ -1,123 +1,30 @@
-import {v1 as neo4j} from 'neo4j-driver';
-import { Driver, Session } from 'neo4j-driver/types/v1';
-import { Neo4jClient } from './Neo4jClient';
-import { GithubApiClient } from './GithubApiClient';
-import * as request from 'request';
-import { Response } from 'request';
-import * as moment from 'moment';
-import * as fs from 'fs-extra';
-import { isEmpty, get, cloneDeep } from 'lodash';
+import moment from 'moment';
+import { cloneDeep, difference } from 'lodash';
 import { Moment } from 'moment';
-import * as ora from 'ora';
+import ora from 'ora';
+import { GitHubMinerHelper } from './GitHubMinerHelper';
+import { GithubApiClient } from './GithubApiClient';
+import { RedisService } from './RedisService';
+import redis from 'redis';
 
-const driver: Driver = neo4j.driver(
-    'bolt://localhost:7687',
-    neo4j.auth.basic('neo4j', 'password')
+const spinner = ora('Processing...').start();
+
+const redisService = new RedisService(
+    redis.createClient({
+        host: process.env.REDIS_HOST || '127.0.0.1',
+        port: +process.env.REDIS_PORT || 6379,
+    }),
 );
-const session: Session = driver.session();
-
-const neo4jClient = new Neo4jClient(
-    driver,
-    session,
+const gitHubMinerHelper = new GitHubMinerHelper(
+    new GithubApiClient(),
+    redisService,
 );
-const githubApiClient = new GithubApiClient();
 
-const mineGithubForPackageJsons = async (page: number = 1, lastPushed: string = '>=2019-01-01') => {
-    const githubResults = await githubApiClient.searchRepos(page, 100, lastPushed);
-
-    const rateReset = get(githubResults, 'headers.x-ratelimit-reset');
-    const result = {
-        totalCount: get(githubResults, 'body.total_count', null),
-        results: get(githubResults, 'body.items.length', null),
-        rateRemaining: get(githubResults, 'headers.x-ratelimit-remaining'),
-        rateReset,
-        timestampNow: moment().unix(),
-        timeUntilReset: rateReset - moment().unix(),
-    };
-
-    if (githubResults.status === 403) {
-        return result;
-    }
-
-    if (!githubResults.body) {
-        console.error('githubResults', githubResults);
-        throw Error('No results found!');
-    }
-
-    if (isEmpty(githubResults.body.items)) {
-        throw Error('No items in body, status code: ' + githubResults.status);
-    }
-
-    if (githubResults.body.total_count > 1000) {
-        console.log('\n\n***** OVER 1000 RESULTS RETURNED! *****\n\n')
-    }
-
-    console.log('githubResults > total >', githubResults.body.total_count);
-    console.log('githubResults > items.length >', githubResults.body.items.length);
-    
-    const promises = githubResults.body.items.map(async (item: any) => {
-        // console.log('forks >>>', item.forks_count);
-
-        const filePath = `${__dirname}/../data/repos/${item.owner.login}/${item.name}`;
-        const packageJsonFile = await fs.readFile(`${filePath}/package.json`, 'utf8').catch(() => null);
-        const gitHubFile = await fs.readFile(`${filePath}/github.json`, 'utf8').catch(() => null);
-
-        if (packageJsonFile && gitHubFile) {
-            console.log('Files already exist in:', filePath);
-            return;
-        }
-
-        const fileUrl = `https://raw.githubusercontent.com/${item.full_name}/master/package.json`;
-        console.log('Fetching file:', fileUrl);
-
-        return request.get(fileUrl, {}, async (error: Error, response: Response, body: any) => {
-            // console.log(`Response headers from ${fileUrl}`, response.headers);
-        
-            if (error) {
-                console.log(`error for ${item.full_name}`, error);
-                return;
-            }
-            if (response.statusCode !== 200) {
-                console.log('non-200 response for:', item.full_name, {status: response.statusCode});
-                return;
-            }
-            if (!body) {
-                console.log(`no body for ${item.full_name}`, error);
-                return;
-            }
-            try {
-                const json = JSON.parse(body);
-                if (isEmpty(json.dependencies) && isEmpty(json.devDependencies)) {
-                    console.log('No dependencies in package.json for', item.full_name);
-                    return;
-                }
-                
-                console.log('Writing files for:', item.full_name, 'to path:', filePath);
-                await fs.outputFile(`${filePath}/package.json`, body);
-                await fs.outputFile(`${filePath}/github.json`, JSON.stringify(item, null, 2));
-            } catch (error) {
-                console.log(`Writing file for ${item.full_name} failed`, error);
-            }
-        });
-    });
-
-    await Promise.all(promises);
-
-    return result;
-
-    // const record = await neo4jClient.saveRepository();
-    // console.log('record', record);
-
-    // on application exit:
-    // driver.close();
-};
-
-const totalPages = 10;
-
-const mineMaxPagesForDate = async (startPage: number, lastUpdated: string) => {
+const mineMaxPagesForDate = async (startPage: number, lastUpdated: string, forks: string = '>=100') => {
+    const totalPages = 10; // max search results = 1000 (10 pages of 100)
     
     if (startPage > totalPages) {
-        console.log('Done!');
+        // console.log('Done!');
         return;
     }
 
@@ -125,21 +32,19 @@ const mineMaxPagesForDate = async (startPage: number, lastUpdated: string) => {
 
     if (startPage) {
         pages = pages.splice(startPage - 1);
-        console.log(`\nresuming from page ${startPage}`, pages, '\n');
-    } else {
-        console.log('\nstarting from page 1', pages, '\n');
     }
 
     let res: any = {
-        rateRemaining: 30,
+        rateRemaining: '',
     };
 
     for (let page of pages) {
-        console.log('Processing page:', page);
-        res = await mineGithubForPackageJsons(+page, lastUpdated).catch((e) => console.log('Error caught:', e));
+        const totalMined = await redisService.scard('github-repos');
+        spinner.color = 'yellow';
+        spinner.text = `Processing page ${page} of forks:${forks}, pushed:${lastUpdated} / Total repos mined: ${totalMined} / Rate-limit remaining: ${res.rateRemaining}`;
+        res = await gitHubMinerHelper.mineGithubForPackageJsons(+page, lastUpdated, forks)
+            .catch((e) => console.log('Error caught:', e));
 
-        console.log(`res for page ${page} of ${lastUpdated}`, res);
-        
         if (!res || res.results < 100 || res.totalCount <= 100) {
             break;
         }
@@ -147,99 +52,148 @@ const mineMaxPagesForDate = async (startPage: number, lastUpdated: string) => {
         let timeout = 0;
         if (res && +res.rateRemaining === 0) {
             timeout = res.timeUntilReset;
-            console.log(`\nHit rate limit on page ${page} of ${lastUpdated}.\nWaiting ${timeout}s until ratelimit has been reset by GitHub's API...\n`);
-            setTimeout(() => {
-                mineMaxPagesForDate(page, lastUpdated);
-            }, timeout * 1000);
+            spinner.color = 'red';
+            spinner.text = `Hit rate limit on page ${page} while querying for forks:${forks} / pushed:${lastUpdated}`;
+            setTimeout(() => mineMaxPagesForDate(page, lastUpdated), timeout * 1000);
             break;
         }
 
-        console.log(`\nResult from page ${page}:\n`, res);
         continue;
     }
 
-    console.log(`\nAll pages processed for ${lastUpdated}, last res:\n`, res);
+    const totalMined = await redisService.scard('github-repos');
+    spinner.text = `All pages processed for ${forks} / ${lastUpdated}. Total repos mined: ${totalMined} / ratelimit remaining: ${res.rateRemaining}`;
     return res;
 };
 
-let lastDateProcessed;
+let lastDateProcessed: string;
+let timeout = 0;
 
-const mineByLastUpdatedDates = async (lastUpdatedDates: string[]) => {
+const mineByLastUpdatedDates = async (lastUpdatedDates: string[], forks: string) => {
+    spinner.text = `Starting forks:${forks} for a total of ${lastUpdatedDates.length} dates...`;
+
     for (let date of lastUpdatedDates) {
         lastDateProcessed = date;
-        console.log('\n\n+++++++\nMining github for repos last updated:', date, '\n');
-        const res = await mineMaxPagesForDate(1, date).catch((e) => console.log('Error caught::', e));
 
-        console.log(`res for date ${date}`, res);
+        const res = await mineMaxPagesForDate(1, date, forks).catch((e) => console.log('Error caught::', e));
+        console.log(`\n\nResults for forks:${forks} / pushed:${date}\n`, JSON.stringify(res, null, 2));
 
-        
-        let timeout = 0;
         if (res && +res.rateRemaining === 0) {
             timeout = res.timeUntilReset;
-            console.log(`\nHit rate limit while querying for ${date}.\nWaiting ${timeout}s until ratelimit has been reset by GitHub's API...\n`);
-            // console.log('will resume from...', lastUpdatedDates.splice(lastUpdatedDates.indexOf(date) + 1)[0]);
-
+            spinner.color = 'red';
+            spinner.text = `Hit rate limit while querying for forks:${forks} / pushed:${date}`;
             const datesRemaining = cloneDeep(lastUpdatedDates);
-
             setTimeout(() => {
-                mineByLastUpdatedDates(datesRemaining.splice(datesRemaining.indexOf(date) + 1))
+                mineByLastUpdatedDates(
+                    datesRemaining.splice(datesRemaining.indexOf(date)),
+                    forks,
+                )
             }, timeout * 1000);
             break;
         }
+
+        // date complete, add to redis...
+        await redisService.sadd('processed-date-ranges', date);
     }
+
+    spinner.text = `Done forks:${forks} for a total of ${lastUpdatedDates.length} dates `;
 };
 
-const buildDates = (daysBack: number, startFrom: number = 1): string[] => {
+const buildDates = async (
+    daysBack: number,
+    startFrom: number = 0,
+    range: number = 0,
+    forks: string = '>=100',
+): Promise<string[]> => {
     let dates = [];
     let count = startFrom;
     let startDate: Moment;
     let endDate: Moment;
 
     while (count <= daysBack) {
-        startDate = moment().subtract('day', count + 1);
-        endDate = moment().subtract('day', count);
-        dates.push(
-            `${startDate.format('YYYY-MM-DD')}..${endDate.format('YYYY-MM-DD')}`,
-        );
-        count++;
+        if (range > 0) {
+            startDate = moment().subtract(count + range, 'day');
+            endDate = moment().subtract(count, 'day');
+            dates.push(
+                `${startDate.format('YYYY-MM-DD')}..${endDate.format('YYYY-MM-DD')}`,
+            );
+            // console.log('count before', count);
+            count += range + 1;
+            // count++;
+            // console.log('count after', count);
+        } else {
+            dates.push(
+                moment().subtract(count, 'day').format('YYYY-MM-DD'),
+            );
+            count++;
+        }
+        if (count > 2 && count < 5) {
+            range = 1;
+        } else if (count >= 5 && count < 10) {
+            range = 2;
+        } else if (count >= 10 && count < 20) {
+            range = 3;
+        } else if (count >= 20 && count < 30) {
+            range = 5;
+        } else if (count >= 30 && count < 50) {
+            range = 8;
+        } else if (count >= 50 && count < 75) {
+            range = 13;
+        } else if (count >= 75) {
+            range = 21;
+        }
+        console.log({count, range});
     }
 
-    return dates;
+    await redisService.del('processed-date-ranges');
+    const datesProcessed = await redisService.smembers('processed-date-ranges');
+    console.log('dates >', dates);
+    console.log('datesProcessed >', datesProcessed);
+
+    return difference(dates, datesProcessed);
 }
 
-// const dates = buildDates(50, 1);
-const dates = buildDates(250, 1);
-// const dates = buildDates(150, 101);
-// const dates = buildDates(200, 151);
-// const dates = buildDates(250, 201);
+let totalDateRanges: number;
+const daysBack = 365;
 
-console.log(dates);
-// console.log(dates.length);
-// console.log(dates.splice(dates.indexOf('2019-06-02..2019-06-03')));
+const wait = async () => {
+    const datesProcessed = await redisService.scard('processed-date-ranges');
 
-const spinner = ora('Processing...').start();
-
-function wait () {
-    spinner.color = 'yellow';
-    spinner.text = `Processing...`;
-    // console.log('wait:', {
-    //     lastDateProcessed,
-    //     indexOf: dates.indexOf(lastDateProcessed),
-    //     dates: dates,
-    //     length: dates.length,
-    // });
-    if (dates.indexOf(lastDateProcessed) !== dates.length - 1) {
-        spinner.text = `Processing... ${lastDateProcessed}`;
-        setTimeout(wait, 1000);
-    }
-
-    if (dates.indexOf(lastDateProcessed) === dates.length - 1) {
+    if (datesProcessed >= totalDateRanges) {
+        const totalMined = await redisService.scard('github-repos');
+        spinner.stop();
+        console.log(`\nDone!\nTotal repos mined: ${totalMined}`);
         process.exit(0);
     }
+    if (timeout && timeout > 0) {
+        spinner.text = `Waiting ${timeout}s until limit has been reset by GitHub's API...`;
+        timeout--;
+    }
+    setTimeout(wait, 1000);
+};
+
+const mineReposBeforeDate = async (daysBack: number): Promise<void> => {
+    const boundaryDate = '<=' + moment().subtract(daysBack, 'day').format('YYYY-MM-DD');
+    const forkRanges = ['>300', '201..300', '151..200', '126..150', '111..125', '100..110'];
+    for (const range of forkRanges) {
+        await mineByLastUpdatedDates([boundaryDate], range);
+    }
+    return;
 }
 
-mineByLastUpdatedDates(dates)
-    .catch((e) => console.log('Error caught', e))
-    .finally(() => {
-        wait();
-    });
+let forks = '>=100';
+if (process.argv.length > 2) {
+    forks = process.argv[2];
+}
+
+buildDates(daysBack, 0, 0, forks)
+    .then(async (dates) => {
+        console.log(dates);
+        process.exit(1);
+        totalDateRanges = dates.length;
+        // await redisService.del('processed-date-ranges');
+        // await mineReposBeforeDate(daysBack);
+        // await mineByLastUpdatedDates(dates, forks);
+    })
+    .catch((error) => console.log('Error caught:', error))
+    .finally(async () => await wait());
