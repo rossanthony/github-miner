@@ -1,5 +1,5 @@
 import moment from 'moment';
-import { cloneDeep, difference } from 'lodash';
+import { cloneDeep } from 'lodash';
 import { Moment } from 'moment';
 import ora from 'ora';
 import { GitHubMinerHelper } from './GitHubMinerHelper';
@@ -25,7 +25,12 @@ const gitHubMinerHelper = new GitHubMinerHelper(
     redisService,
 );
 
-const mineMaxPagesForDate = async (startPage: number, lastUpdated: string, forks: string = '>=100') => {
+const mineMaxPagesForDate = async (
+    startPage: number,
+    lastUpdated: string,
+    forks: string = '>=100',
+    stars: string = '',
+) => {
     const totalPages = 10; // max search results = 1000 (10 pages of 100)
     if (startPage > totalPages) {
         return;
@@ -36,12 +41,13 @@ const mineMaxPagesForDate = async (startPage: number, lastUpdated: string, forks
     if (startPage) {
         pages = pages.splice(startPage - 1);
     }
+    const key = `forks:${forks}|pushed:${lastUpdated}|stars:${stars}`;
 
     for (let page of pages) {
         const totalMined = await redisService.scard('github-repos');
         spinner.color = 'yellow';
-        spinner.text = `Processing page ${page} of forks:${forks}, pushed:${lastUpdated} / Total repos mined: ${totalMined} / Rate-limit remaining: ${res.rateRemaining}`;
-        res = await gitHubMinerHelper.mineGithubForPackageJsons(+page, lastUpdated, forks)
+        spinner.text = `Processing page ${page} of ${key}.\nTotal repos mined: ${totalMined} / Rate-limit remaining: ${res.rateRemaining}`;
+        res = await gitHubMinerHelper.mineGithubForPackageJsons(+page, lastUpdated, forks, stars)
             .catch((e) => console.log('Error caught:', e));
 
         if (!res || res.results < 100 || res.totalCount <= 100) {
@@ -52,8 +58,8 @@ const mineMaxPagesForDate = async (startPage: number, lastUpdated: string, forks
         if (res && +res.rateRemaining === 0) {
             timeout = res.timeUntilReset;
             spinner.color = 'red';
-            spinner.text = `Hit rate limit on page ${page} while querying for forks:${forks} / pushed:${lastUpdated}`;
-            setTimeout(() => mineMaxPagesForDate(page, lastUpdated), timeout * 1000);
+            spinner.text = `Hit rate limit on page ${page} while querying for ${key}`;
+            setTimeout(() => mineMaxPagesForDate(page, lastUpdated, forks, stars), timeout * 1000);
             break;
         }
 
@@ -61,38 +67,55 @@ const mineMaxPagesForDate = async (startPage: number, lastUpdated: string, forks
     }
 
     const totalMined = await redisService.scard('github-repos');
-    spinner.text = `All pages processed for ${forks} / ${lastUpdated}. Total repos mined: ${totalMined} / ratelimit remaining: ${res.rateRemaining}`;
+    spinner.text = `All pages processed for ${key}.\nTotal repos mined: ${totalMined}, ratelimit remaining: ${res.rateRemaining}`;
     return res;
 };
 
 let timeout = 0;
 
-const mineByLastUpdatedDates = async (lastUpdatedDates: string[], forks: string) => {
-    spinner.text = `Starting forks:${forks} for a total of ${lastUpdatedDates.length} dates...`;
+const mineByLastUpdatedDates = async (lastUpdatedDates: string[], forks: string, stars: string = '') => {
+    
+    spinner.text = `Starting forks:${forks}|stars:${stars} for a total of ${lastUpdatedDates.length} dates...`;
 
     for (let date of lastUpdatedDates) {
-        const res = await mineMaxPagesForDate(1, date, forks).catch((e) => console.log('Error caught::', e));
-        console.log(`\n\nResults for forks:${forks} / pushed:${date}\n`, JSON.stringify(res, null, 2));
+        console.time(`forks:${forks}|pushed:${date}|stars:${stars}`);
+        const key = `forks:${forks}|pushed:${date}|stars:${stars}`;
+        if (await redisService.sismember('processed-date-ranges', key)) {
+            console.log(`Already processed ${key}, skipping...`);
+            continue;
+        }
+        const res = await mineMaxPagesForDate(1, date, forks, stars).catch((e) => console.log('Error caught::', e));
+        console.log(`\n\nResults.........\n`, JSON.stringify({
+            ...res,
+            key,
+            forks,
+            stars,
+            date,
+        }, null, 2));
 
         if (res && +res.rateRemaining === 0) {
             timeout = res.timeUntilReset;
             spinner.color = 'red';
-            spinner.text = `Hit rate limit while querying for forks:${forks} / pushed:${date}`;
+            spinner.text = `Hit rate limit while querying for ${key}`;
             const datesRemaining = cloneDeep(lastUpdatedDates);
             setTimeout(() => {
                 mineByLastUpdatedDates(
                     datesRemaining.splice(datesRemaining.indexOf(date)),
                     forks,
+                    stars,
                 )
             }, timeout * 1000);
             break;
         }
 
         // date complete, add to redis...
-        await redisService.sadd('processed-date-ranges', date);
+        await redisService.sadd('processed-date-ranges', key);
+        console.log('\n\n');
+        console.timeLog(`forks:${forks}|pushed:${date}|stars:${stars}`, res);
+        console.timeEnd(`forks:${forks}|pushed:${date}|stars:${stars}`);
     }
 
-    spinner.text = `Done forks:${forks} for a total of ${lastUpdatedDates.length} dates `;
+    spinner.text = `Done forks:${forks}|stars:${stars} for a total of ${lastUpdatedDates.length} dates `;
 };
 
 const buildDates = async (
@@ -135,11 +158,7 @@ const buildDates = async (
             range = 21;
         }
     }
-    // check cache for previously completed dates
-    const datesProcessed = await redisService.smembers('processed-date-ranges');
-
-    // return a sub-set of dates, removing any that have already been processed
-    return difference(dates, datesProcessed);
+    return dates;
 }
 
 let totalDateRanges: number;
@@ -161,17 +180,43 @@ const wait = async () => {
     setTimeout(wait, 1000);
 };
 
-const mineReposBeforeDate = async (daysBack: number): Promise<void> => {
+const mineReposBeforeDate = async (daysBack: number, forks: string, stars: string): Promise<void> => {
     const boundaryDate = '<=' + moment().subtract(daysBack, 'day').format('YYYY-MM-DD');
-    const forkRanges = ['>300', '201..300', '151..200', '126..150', '111..125', '100..110'];
-    for (const range of forkRanges) {
-        if (await redisService.sismember('processed-date-ranges', `${boundaryDate}|${range}`)) {
-            console.log(`date/fork range already processed for [${boundaryDate}|${range}], skipping...`)
-            continue;
+    if (stars) {
+        const starRanges = [
+            '>500', '351..500', '276..350', '241..275', '211..240', '191..210', '171..190',
+            '171..190', '156..170', '141..155', '131..140', '121..130', '111..120', '105..110', '100..104'
+        ];
+        for (const stars of starRanges) {
+            const key = `updated:${boundaryDate}|stars:${stars}`;
+            if (await redisService.sismember('processed-date-ranges', key)) {
+                console.log(`date/stars range already processed for [${key}], skipping...`)
+                continue;
+            }
+            console.time(`updated:${boundaryDate}|forks:${forks}|stars:${stars}`);
+            await mineByLastUpdatedDates([boundaryDate], forks, stars);
+            console.log('\n\n');
+            console.timeEnd(`updated:${boundaryDate}|forks:${forks}|stars:${stars}`);
+            console.log(`date/stars range [${key}] done, adding to cache...`)
+            await redisService.sadd('processed-date-ranges', key);
         }
-        await mineByLastUpdatedDates([boundaryDate], range);
-        console.log(`date/fork range [${boundaryDate}|${range}] done, adding to cache...`)
-        await redisService.sadd('processed-date-ranges', `${boundaryDate}|${range}`);
+        return;
+    }
+    if (forks) {
+        const forkRanges = ['>300', '201..300', '151..200', '126..150', '111..125', '100..110'];
+        for (const range of forkRanges) {
+            const key = `updated:${boundaryDate}|forks:${range}`;
+            if (await redisService.sismember('processed-date-ranges', key)) {
+                console.log(`date/fork range already processed for [${key}], skipping...`)
+                continue;
+            }
+            console.time(`updated:${boundaryDate}|forks:${range}`);
+            await mineByLastUpdatedDates([boundaryDate], range);
+            console.log('\n\n');
+            console.timeEnd(`updated:${boundaryDate}|forks:${range}`);
+            console.log(`date/fork range [${key}] done, adding to cache...`)
+            await redisService.sadd('processed-date-ranges', key);
+        }
     }
     return;
 }
@@ -180,13 +225,16 @@ let forks = '>=100';
 if (process.argv.length > 2) {
     forks = process.argv[2];
 }
+let stars = '';
+if (process.argv.length > 3) {
+    stars = process.argv[3];
+}
 
 buildDates(daysBack, 0, 0)
     .then(async (dates) => {
         console.log(dates);
-        totalDateRanges = dates.length;
-        await mineReposBeforeDate(daysBack);
-        await mineByLastUpdatedDates(dates, forks);
+        await mineReposBeforeDate(daysBack, forks, stars);
+        await mineByLastUpdatedDates(dates, forks, stars);
     })
     .catch((error) => console.log('Error caught:', error))
     .finally(async () => await wait());

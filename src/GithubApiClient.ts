@@ -38,11 +38,17 @@ export class GithubApiClient {
         });
     }
 
-    public searchRepos(page: number = 1, lastPushed: string = '>=2019-01-01', forks: string = '>=100'): Promise<any> {
-        return this.getRequest('/search/repositories', {
-            q: `language:javascript forks:${forks} pushed:${lastPushed}`,
-            page,
-        });
+    public searchRepos(
+        page: number = 1,
+        lastPushed: string = '>=2019-01-01',
+        forks: string = '>=100',
+        stars: string = '',
+    ): Promise<any> {
+        let q = `language:javascript forks:${forks} pushed:${lastPushed}`;
+        if (stars) {
+            q += ` stars:${stars}`;
+        }
+        return this.getRequest('/search/repositories', { q, page });
     }
 
     public async getRepo(username: string, repo: string): Promise<any> {

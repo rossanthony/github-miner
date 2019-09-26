@@ -1,8 +1,11 @@
-import { RedisClient, RedisError } from 'redis';
+import redis, { RedisClient, RedisError } from 'redis';
 
 export class RedisService {
     constructor(
-        private redisClient: RedisClient, 
+        private redisClient: RedisClient = redis.createClient({
+            host: process.env.REDIS_HOST || '127.0.0.1',
+            port: +process.env.REDIS_PORT || 6379,
+        }),
     ) {}
 
     /**
@@ -39,6 +42,9 @@ export class RedisService {
         });
     }
 
+    /**
+     * Returns all the members of the set value stored at key.
+     */
     public async smembers(key: string): Promise<string[]> {
         return new Promise((resolve) => {
             this.redisClient.smembers(key, (error: RedisError | null, reply: string[]) => {
@@ -50,17 +56,23 @@ export class RedisService {
         });
     }
 
-    public async scard(key: string): Promise<number> {
+    /**
+     * Returns the set cardinality (number of elements) of the set stored at key.
+     */
+    public async scard(key: string): Promise<number | null> {
         return new Promise((resolve) => {
             this.redisClient.scard(key, (error: RedisError | null, reply: number) => {
                 if (error) {
                     console.log('Redis error thrown for scard:', key);
                 }
-                resolve(reply || 0);
+                resolve(reply || null);
             });
         });
     }
 
+    /**
+     * Removes the specified keys. A key is ignored if it does not exist.
+     */
     public async del(key: string): Promise<number> {
         return new Promise((resolve) => {
             this.redisClient.del(key, (error: RedisError | null, reply: number) => {

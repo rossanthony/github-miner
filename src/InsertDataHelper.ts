@@ -1,64 +1,41 @@
 import * as fs from 'fs-extra';
 import { get } from 'lodash'; 
-import { Driver } from 'neo4j-driver/types/v1';
-import { v1 as neo4j } from 'neo4j-driver';
 import { Neo4jClient } from './Neo4jClient';
 import { RedisService } from './RedisService';
-import redis from 'redis';
 import { Ora } from 'ora';
 
 export class InsertDataHelper {
-    private _neo4jClient: Neo4jClient;
-    private _driver: Driver;
-    private _redisService: RedisService;
-
     constructor(
         private _spinner: Ora,
-    ) {
-        this._driver = neo4j.driver(
-            'bolt://localhost:7687',
-            neo4j.auth.basic('neo4j', 'password')
-        );
-        this._redisService = new RedisService(
-            redis.createClient({
-                host: process.env.REDIS_HOST || '127.0.0.1',
-                port: +process.env.REDIS_PORT || 6379,
-            }),
-        );
-        this._neo4jClient = new Neo4jClient(
-            this._driver,
-            this._driver.session(),
-            this._redisService,
-        );
-    }
+        private _redisService: RedisService,
+        private _neo4jClient: Neo4jClient,
+    ) {}
 
     public async insertData(): Promise<void> {
         const users: string[] = fs.readdirSync('./data/repos/');
-        // console.log('folder count in in /data/repos', users.length);
-    
-        // const record = await neo4jClient.getNodeModule('123');
-        // console.log('record', JSON.stringify(record, null, 2));
-    
         let usersCount = 1;
         let reposTotalCount = 1;
-        // let found = 0;
-        // let foundArr: string[] = [];
     
         for (let username of users) {
             if (username === '.DS_Store') {
                 continue;
             }
-    
             const repos: string[] = fs.readdirSync(`./data/repos/${username}`);
-            console.log(`./data/repos/${username}`, repos);
-    
             let reposCount = 1;
+
             for (let repo of repos) {
                 if (repo === '.DS_Store') {
                     continue;
                 }
-                this._spinner.text = `Processing ${username}/${repo}\n[user ${usersCount} of ${users.length} | repo ${reposCount} of ${repos.length} | total repos inserted: ${reposTotalCount}]`;
-                await this.insertDataForRepo(username, repo);
+                this._spinner.text = `Processing ${username}/${repo}\n[user ${usersCount} of ${users.length}`
+                    + ` | repo ${reposCount} of ${repos.length} | total repos inserted: ${reposTotalCount}]`;
+
+                try {
+                    await this.insertDataForRepo(username, repo);
+                } catch (error) {
+                    console.log(`Error caught during ${username}/${repo}\n`, error);
+                    continue;
+                }
                 reposCount++;
                 reposTotalCount++;
             }
@@ -73,10 +50,10 @@ export class InsertDataHelper {
 
     public async insertDataForRepo(username: string, repo: string): Promise<void> {
         if (await this._redisService.sismember('github-repos-inserted', `${username}/${repo}`)) {
-            console.log(`${repo} exists is cache, skipping...`)
+            console.log(`${username}/${repo} exists is cache, skipping...`)
             return;
         } else {
-            console.log(`${repo} does not exist is cache`)
+            console.log(`${username}/${repo} does not exist is cache`)
         }
 
         const filePath = `./data/repos/${username}/${repo}/github.json`;
@@ -95,7 +72,7 @@ export class InsertDataHelper {
             return;
         }
 
-        console.log(`${username}/${repo}/github.json`, JSON.stringify(gitHubJson, null, 2));
+        // console.log(`${username}/${repo}/github.json`, JSON.stringify(gitHubJson, null, 2));
 
         const record = await this._neo4jClient.getGitRepo(gitHubJson.full_name);
         if (!record) {
@@ -129,6 +106,7 @@ export class InsertDataHelper {
             created: get(data, 'time.created'),
             dependencies: data.dependencies,
             devDependencies: data.devDependencies,
+            peerDependencies: data.peerDependencies,
             version: data.version,
             homepage: data.homepage,
             keywords: data.keywords,

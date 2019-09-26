@@ -1,4 +1,5 @@
 import { Driver, Session, Record, StatementResult } from 'neo4j-driver/types/v1';
+import { v1 as neo4j } from 'neo4j-driver';
 import _ from 'lodash';
 import * as fs from 'fs-extra';
 import { RedisService } from './RedisService';
@@ -6,19 +7,26 @@ import { RedisService } from './RedisService';
 const NpmApi = require('npm-api');
 
 export class Neo4jClient {
+    private driver: Driver;
+    private session: Session;
+
     constructor(
-        private readonly driver: Driver,
-        private readonly session: Session,
         private readonly redisService: RedisService,
         private readonly npmApi: any = new NpmApi(),
-    ) {}
+    ) {
+        this.driver = neo4j.driver(
+            'bolt://localhost:7687',
+            neo4j.auth.basic('neo4j', 'password')
+        ),
+        this.session = this.driver.session();
+    }
 
     public close(): void {
         this.driver.close();
         this.session.close();
     }
 
-    public async getNodeModule(name: string): Promise<Record | null> {
+    public async getNodeModule(name: string): Promise<any> {
         const resultPromise: StatementResult = await this.session.run(
             'MATCH (a:NodeModule {name: $name}) RETURN a', { name }
         );
@@ -100,81 +108,157 @@ export class Neo4jClient {
             return;
         }
 
-        // 1. check if this repo is a hosted package on npm...
-        const npmData = await this.getNpmData(packageJson.name, true);
+        let nodeModule = await this.getNodeModule(packageJson.name);
 
-        if (!npmData || npmData.error) {
-            // GitRepo is not a known package on NPM
-            // Just save it's dependencies...
-            console.log(`${packageJson.name} is not an npm package, saving dependencies...`);
+        if (!nodeModule) {
+            // 1. check if this repo is a hosted package on npm...
+            const npmData = await this.getNpmData(packageJson.name);
 
-            for (let dependency in packageJson.dependencies) {
-                // for each dependency save it and save a relationship between the git repo and the module
-                try {
+            if (npmData) {
+                nodeModule = await this.saveNodeModule(npmData);
+                await this.setRelationBetweenNodeModuleAndGitRepo(
+                    nodeModule.name,
+                    repoName,
+                    'HOSTED_ON',
+                );
+                // and save it's dependencies...
+                await this.saveDepsOfNodeModule(npmData, repoName);
+                await this.redisService.sadd('dependencies-saved', nodeModule.name); 
+                await this.saveDevDepsOfNodeModule(npmData, repoName);
+                await this.redisService.sadd('dev-dependencies-saved', nodeModule.name);
+                await this.savePeerDepsOfNodeModule(npmData, repoName);
+                await this.redisService.sadd('peer-dependencies-saved', nodeModule.name);
+                await this.redisService.sadd('github-repos-inserted', repoName);
+                return;
+            }
+        }
+
+        // GitRepo is not a known package on NPM (or we've already saved it)
+        // Just save it's dependencies...
+        console.log(`\n${packageJson.name} is not an npm package, saving dependencies...`);
+
+        for (let dependency in packageJson.dependencies) {
+            // for each dependency save it and save a relationship between the git repo and the module
+            try {
+                let nodeModule = await this.getNodeModule(dependency);
+                if (!nodeModule) {
                     const npmData = await this.getNpmData(dependency);
-                    await this.saveNodeModule(npmData);
+                    if (npmData) {
+                        nodeModule = await this.saveNodeModule(npmData);
+                        await this.saveDepsOfNodeModule(npmData);
+                        await this.redisService.sadd('dependencies-saved', dependency);
+                    } else {
+                        throw new Error('No data found in npm');
+                    }
+                }
+                if (nodeModule) {
                     await this.setRelationBetweenGitRepoAndNodeModule(
                         repoName,
                         dependency,
                         'DEPENDS_ON',
                         packageJson.dependencies[dependency], // version
                     );
-                    // attempt to save sub-dependencies...
-                    await this.saveDepsOfNodeModule(npmData);
-                    await this.redisService.sadd('dependencies-saved', npmData.name);
-                } catch (error) {
-                    console.error(`Error caught while saving dependency: ${dependency}`, error);
                 }
+            } catch (error) {
+                console.error(`Error caught while saving dependency: ${dependency}`, error);
             }
+        }
 
-            for (let devDependency in packageJson.devDependencies) {
-                // for each dev dependency save it and save a relationship between the git repo and the module
-                try {
+        for (let devDependency in packageJson.devDependencies) {
+            // for each dev dependency save it and save a relationship between the git repo and the module
+            try {
+                let nodeModule = await this.getNodeModule(devDependency);
+                if (!nodeModule) {
                     const npmData = await this.getNpmData(devDependency);
-                    await this.saveNodeModule(npmData);
+                    if (npmData) {
+                        nodeModule = await this.saveNodeModule(npmData);
+                        // attempt to save sub-dependencies
+                        // note: intentionally fetching dependencies here (not devDependencies)
+                        // fetching devDependencies of devDependencies recursively is excessively intensive,
+                        // when a library is installed it only pulls in the dependencies, so no need to traverse
+                        // devDependencies any further than 1 level
+                        await this.saveDepsOfNodeModule(npmData);
+                        await this.redisService.sadd('dependencies-saved', devDependency);
+                    } else {
+                        throw new Error('No data found in npm');
+                    }
+                }
+                if (nodeModule) {
                     await this.setRelationBetweenGitRepoAndNodeModule(
                         repoName,
                         devDependency,
                         'DEV_DEPENDS_ON',
                         packageJson.devDependencies[devDependency], // version
                     );
-                    // attempt to save sub-dependencies
-                    // note: intentionally fetching dependencies here (not devDependencies)
-                    // fetching devDependencies of devDependencies recursively is excessively intensive,
-                    // when a library is installed it only pulls in the dependencies, so no need to traverse
-                    // devDependencies any further than 1 level
-                    await this.saveDepsOfNodeModule(npmData);
-                    await this.redisService.sadd('dependencies-saved', npmData.name);
-                } catch (error) {
-                    console.error(`Error caught while saving devDependency: ${devDependency}`, error);
                 }
+            } catch (error) {
+                console.error(`Error caught while saving devDependency: ${devDependency}`, error);
             }
-            return;
         }
 
-        if (npmData) {
-            // this repo is itself a package hosted on NPM, so save it...
-            await this.saveNodeModule(npmData);
-            await this.setRelationBetweenNodeModuleAndGitRepo(
-                npmData.name,
-                repoName,
-                'HOSTED_ON',
-            );
-            // and save it's dependencies...
-            await this.saveDepsOfNodeModule(npmData, repoName);
-            await this.redisService.sadd('dependencies-saved', npmData.name); 
-            await this.saveDevDepsOfNodeModule(npmData, repoName);
-            await this.redisService.sadd('dev-dependencies-saved', npmData.name); 
+        console.log('packageJson.peerDependencies >>>', packageJson.peerDependencies);
+
+        for (let peerDependency in packageJson.peerDependencies) {
+            // for each peer dependency save it and save a relationship between the git repo and the module
+            try {
+                let nodeModule = await this.getNodeModule(peerDependency);
+                if (!nodeModule) {
+                    const npmData = await this.getNpmData(peerDependency);
+                    if (npmData) {
+                        nodeModule = await this.saveNodeModule(npmData);
+                        // attempt to save sub-dependencies
+                        // note: intentionally fetching dependencies here (not peerDependencies)
+                        // fetching peerDependencies of peerDependencies recursively is unnecessary,
+                        // when a library is installed it only pulls in the dependencies, so no need to traverse
+                        // peerDependencies any further than 1 level
+                        await this.saveDepsOfNodeModule(npmData);
+                        await this.redisService.sadd('dependencies-saved', peerDependency);
+                    } else {
+                        throw new Error('No data found in npm');
+                    }
+                }
+                if (nodeModule) {
+                    await this.setRelationBetweenGitRepoAndNodeModule(
+                        repoName,
+                        peerDependency,
+                        'PEER_DEPENDS_ON',
+                        packageJson.peerDependencies[peerDependency], // version
+                    );
+                }
+            } catch (error) {
+                console.error(`Error caught while saving peerDependency: ${peerDependency}`, error);
+            }
         }
         await this.redisService.sadd('github-repos-inserted', repoName);
     }
 
-    private async saveNodeModule(npmData: any): Promise<void> {
-        if (!await this.getNodeModule(npmData.name)) {
-            const name = _.snakeCase(npmData.name);
-            const query = `CREATE (_${name}:NodeModule {name: '${npmData.name}'})\n`;
-            await this.session.run(query);
+    private async saveNodeModule(npmData: any): Promise<any> {
+        const existingModule = await this.getNodeModule(npmData.name);
+        if (existingModule) {
+            return existingModule;
         }
+        const dataToSave: any = {
+            name: npmData.name,
+            description: _.get(npmData, 'description'),
+            version: _.get(npmData, 'version'),
+            repositoryType: _.get(npmData, 'repository.type'),
+            repositoryUrl: _.get(npmData, 'repository.url'),
+            dependenciesTotal: Object.keys(_.get(npmData, 'dependencies', {})).length,
+            devDependenciesTotal: Object.keys(_.get(npmData, 'devDependencies', {})).length,
+            peerDependenciesTotal: Object.keys(_.get(npmData, 'peerDependencies', {})).length,
+        };
+        const fields = Object.keys(dataToSave)
+            .filter((value: string) => dataToSave[value] !== undefined)
+            .map((field: string) => `${field}: $${field}`)
+            .join(',');
+
+        console.log(`saveNodeModule > ${npmData.name}`, { fields, dataToSave });
+        const name = _.snakeCase(npmData.name);
+        await this.session.run(
+            `CREATE (_${name}:NodeModule {${fields}})`,
+            dataToSave,
+        );
+        return dataToSave;
     }
 
     private async saveDepsOfNodeModule(
@@ -206,8 +290,10 @@ export class Neo4jClient {
                     continue;
                 }
                 
-                if (!alreadyExistsInCache) {
-                    await this.saveNodeModule({ name: dependency });
+                if (!alreadyExistsInCache && !await this.getNodeModule(dependency)) {
+                    await this.saveNodeModule(
+                        await this.getNpmData(dependency),
+                    );
                 }
 
                 if (dependencyOfGitRepo) {
@@ -250,15 +336,19 @@ export class Neo4jClient {
         dependencyOfGitRepo: string,
         callCount: number = 1,
     ): Promise<any> {
-        if (!npmData || !npmData.name || !npmData.devDependencies) {
+        if (!npmData || !npmData.name || !npmData.devDependencies || _.isEmpty(npmData.devDependencies)) {
             return;
         }
+
+        console.log(`Saving devDependencies for ${dependencyOfGitRepo}`, npmData.devDependencies)
 
         for (let dependency in npmData.devDependencies) {
             try {
                 const devDepsExistsInCache = await this.redisService.sismember('dev-dependencies-saved', dependency);
-                if (!devDepsExistsInCache) {
-                    await this.saveNodeModule({ name: dependency });
+                if (!devDepsExistsInCache && !await this.getNodeModule(dependency)) {
+                    await this.saveNodeModule(
+                        await this.getNpmData(dependency),
+                    );
                 }
                 await this.setRelationBetweenGitRepoAndNodeModule(
                     dependencyOfGitRepo,
@@ -278,7 +368,62 @@ export class Neo4jClient {
                 const depsExistsInCache = await this.redisService.sismember('dependencies-saved', dependency);
 
                 if (!relationshipCreated || depsExistsInCache) {
-                    console.log(`\nCall count: ${callCount} / Dev-deps of ${dependency} already in cache, skipping...\n`);
+                    console.log(`\nCall count: ${callCount} / deps of dev-dep ${dependency} already in cache, skipping...\n`);
+                    continue;
+                }
+
+                if (relationshipCreated && !depsExistsInCache) {
+                    // When saving dev dependencies, only save one level deep, but do recursively fetch the
+                    // main deps (because these would be required when developing in this repo locally)
+                    const dependencyNpmData = await this.getNpmData(dependency);
+                    await this.saveDepsOfNodeModule(dependencyNpmData, undefined, callCount + 1);
+                    await this.redisService.sadd('dependencies-saved', dependency);
+                }
+            } catch (error) {
+                console.error(`There was an error parsing npm data for dependency: ${dependency}`);
+            }
+        }
+    }
+
+    private async savePeerDepsOfNodeModule(
+        npmData: any,
+        dependencyOfGitRepo: string,
+        callCount: number = 1,
+    ): Promise<any> {
+        if (!npmData || !npmData.name || !npmData.peerDependencies || _.isEmpty(npmData.peerDependencies)) {
+            console.log(`No peerDependencies for ${dependencyOfGitRepo}`, npmData.peerDependencies);
+            return;
+        }
+
+        console.log(`Saving peerDependencies for ${dependencyOfGitRepo}`, npmData.peerDependencies);
+
+        for (let dependency in npmData.peerDependencies) {
+            try {
+                const peerDepsExistsInCache = await this.redisService.sismember('peer-dependencies-saved', dependency);
+                if (!peerDepsExistsInCache && !await this.getNodeModule(dependency)) {
+                    await this.saveNodeModule(
+                        await this.getNpmData(dependency),
+                    );
+                }
+                await this.setRelationBetweenGitRepoAndNodeModule(
+                    dependencyOfGitRepo,
+                    dependency,
+                    'PEER_DEPENDS_ON',
+                    npmData.peerDependencies[dependency],
+                );
+                console.log(`\nSaved relationship between ${dependencyOfGitRepo} -> ${dependency}\n`);
+
+                const relationshipCreated = await this.setRelationBetweenNodeModules(
+                    npmData.name,
+                    dependency,
+                    'PEER_DEPENDS_ON',
+                    npmData.devDependencies[dependency],
+                );
+
+                const depsExistsInCache = await this.redisService.sismember('dependencies-saved', dependency);
+
+                if (!relationshipCreated || depsExistsInCache) {
+                    console.log(`\nCall count: ${callCount} / deps of peer-dep ${dependency} already in cache, skipping...\n`);
                     continue;
                 }
 
@@ -296,14 +441,14 @@ export class Neo4jClient {
     }
 
     private async setRelationBetweenNodeModules(a: string, b: string, relationship: string, version: string = ''): Promise<boolean> {
-        console.log('setRelationBetweenNodeModules >');
+        console.log('\nsetRelationBetweenNodeModules >');
         const result = await this.session.run(
             `MATCH  (a:NodeModule {name:'${a}'}), (b:NodeModule {name:'${b}'})\n` +
-            `RETURN EXISTS((a)-[:${relationship}]-(b))`,
+            `RETURN EXISTS((a)-[:${relationship}]->(b))`,
         );
         console.log(
-            'relationshipExists?',
-            `(a:NodeModule {name:'${a}'})-[:${relationship}]-(b:NodeModule {name:'${b}'})`,
+            '\nrelationshipExists?',
+            `(a:NodeModule {name:'${a}'})-[:${relationship}]->(b:NodeModule {name:'${b}'})`,
             _.get(result, 'records[0]._fields[0]'),
         );
         if (!_.get(result, 'records[0]._fields[0]')) {
@@ -319,11 +464,11 @@ export class Neo4jClient {
     private async setRelationBetweenGitRepoAndNodeModule(a: string, b: string, relationship: string, version: string = ''): Promise<boolean> {
         const result = await this.session.run(
             `MATCH  (a:GitRepo {full_name:'${a}'}), (b:NodeModule {name:'${b}'})\n` +
-            `RETURN EXISTS((a)-[:${relationship}]-(b))`,
+            `RETURN EXISTS((a)-[:${relationship}]->(b))`,
         );
         console.log(
-            'relationshipExists?',
-            `(a:GitRepo {full_name:'${a}'})-[:${relationship}]-(b:NodeModule {name:'${b}'})`,
+            '\nrelationshipExists?',
+            `(a:GitRepo {full_name:'${a}'})-[:${relationship}]->(b:NodeModule {name:'${b}'})`,
             _.get(result, 'records[0]._fields[0]'),
         );
         if (!_.get(result, 'records[0]._fields[0]')) {
@@ -337,6 +482,18 @@ export class Neo4jClient {
     }
 
     private async setRelationBetweenNodeModuleAndGitRepo(a: string, b: string, relationship: string) {
+        // const query = `MATCH (a:NodeModule {name:'${a}'})\n` +
+        //               `MATCH (b:GitRepo {full_name:'${b}'})\n` +
+        //               `MERGE (a)-[:${relationship}]->(b)`;
+
+        // const result = await this.session.run(query);
+        // console.log(`\nSetting relationship:\n${query}`, result);
+
+        // if (!_.get(result, 'records[0]._fields[0]')) {
+        //     return true;
+        // }
+        // return false;
+
         const result = await this.session.run(
             `MATCH  (a:NodeModule {name:'${a}'}), (b:GitRepo {full_name:'${b}'})\n` +
             `RETURN EXISTS((a)-[:${relationship}]-(b))`,
@@ -356,35 +513,38 @@ export class Neo4jClient {
         return false;
     }
 
-    private async getNpmData(name: string, includeDevDependencies: boolean = false): Promise<any> {
+    private async getNpmData(name: string): Promise<any> {
         console.time(`getNpmData ${name}`);
-        let dependencyNpmData = null;
+        let npmData = null;
+        const filePath = `./data/npm/${name}/data.json`;
         try {
-            const filePath = `./data/npm/${name}/data.json`;
             console.timeLog(`getNpmData ${name}`, {step: 'read file'});
             const fileContents: string|null = await fs.readFile(filePath, 'utf8').catch(() => null);
             if (fileContents) {
                 console.timeLog(`getNpmData ${name}`, {step: 'parsing file to json object'});
-                dependencyNpmData = JSON.parse(fileContents);
+                npmData = JSON.parse(fileContents);
             }
-            if (!dependencyNpmData) {
+            if (!npmData || !npmData.repository) {
                 console.timeLog(`getNpmData ${name}`, {step: 'npm api call'});
-                const repo = this.npmApi.repo(name);
+                const repo = await this.npmApi.repo(name);
                 console.timeLog(`getNpmData ${name}`, {step: 'npm repo fetched'});
-                dependencyNpmData = {
-                    ...repo,
-                    dependencies: await repo.dependencies(),
-                    devDependencies: includeDevDependencies ? await repo.devDependencies() : null,
-                };
+                npmData = await repo.package();
                 console.timeLog(`getNpmData ${name}`, {step: 'npm dependencies fetched'});
                 console.timeLog(`getNpmData ${name}`, {step: 'saving to file'});
-                await fs.outputFile(filePath, JSON.stringify(dependencyNpmData, null, 2));
+                await fs.outputFile(filePath, JSON.stringify(npmData, null, 2));
                 console.timeLog(`getNpmData ${name}`, {step: 'saved to file'});
             }
         } catch (error) {
-            console.log(`Error caught trying to fetch npm data for ${name}`, error);
+            console.log(`\nError caught trying to fetch npm data for ${name}`, error);
+            return;
         }
         console.timeEnd(`getNpmData ${name}`);
-        return dependencyNpmData;
+        // console.log(`getNpmData ${name}`, {
+        //     npmData,
+        //     includeDevDependencies,
+        //     name,
+        //     filePath,
+        // });
+        return npmData;
     }
 }

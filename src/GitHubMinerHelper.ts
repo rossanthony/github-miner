@@ -13,10 +13,14 @@ export interface MinerReturnType {
     rateReset: number | undefined;
     timestampNow: number;
     timeUntilReset: number;
+    totalReposWithoutPackageJson: number;
+    totalReposWithPackageJson: number;
 }
 
 export class GitHubMinerHelper {
     private totalApiCalls: number = 0;
+    private totalReposWithPackageJson: number = 0;
+    private totalReposWithoutPackageJson: number = 0;
 
     constructor(
         private githubApiClient: GithubApiClient,
@@ -27,8 +31,9 @@ export class GitHubMinerHelper {
         page: number = 1,
         lastPushed: string = '>=2019-01-01',
         forks: string = '>=100',
+        stars: string = '',
     ): Promise<MinerReturnType> {
-        const githubResults = await this.githubApiClient.searchRepos(page, lastPushed, forks);
+        const githubResults = await this.githubApiClient.searchRepos(page, lastPushed, forks, stars);
 
         const rateReset = get(githubResults, 'headers.x-ratelimit-reset');
         const result = {
@@ -39,6 +44,8 @@ export class GitHubMinerHelper {
             timestampNow: moment().unix(),
             timeUntilReset: rateReset - moment().unix(),
             totalApiCalls: this.totalApiCalls++,
+            totalReposWithoutPackageJson: this.totalReposWithoutPackageJson,
+            totalReposWithPackageJson: this.totalReposWithoutPackageJson,
         };
 
         if (githubResults.status === 403) {
@@ -57,7 +64,7 @@ export class GitHubMinerHelper {
         if (githubResults.body.total_count > 1000) {
             await this.redisService.sadd(
                 'github-searches-over-1000',
-                `page=${page},pushed=${lastPushed},forks=${forks}`,
+                `page=${page},pushed=${lastPushed},forks=${forks},stars=${stars}`,
             );
             console.log('\n\n***** OVER 1000 RESULTS RETURNED! *****\n\n')
         }
@@ -65,10 +72,10 @@ export class GitHubMinerHelper {
         await Promise.all(githubResults.body.items.map(async (item: any) => {
             if (await this.redisService.sismember('github-repos', item.full_name)) {
                 // already set in cache
-                console.log(`existsInCache >>> ${item.full_name}`);
+                // console.log(`existsInCache >>> ${item.full_name}`);
                 return;
             } else {
-                console.log(`not in cache >>> ${item.full_name}`);
+                // console.log(`not in cache >>> ${item.full_name}`);
             }
 
             const filePath = `${__dirname}/../data/repos/${item.owner.login}/${item.name}`;
@@ -76,18 +83,25 @@ export class GitHubMinerHelper {
             const gitHubFile = await fs.readFile(`${filePath}/github.json`, 'utf8').catch(() => null);
 
             if (packageJsonFile && gitHubFile) {
-                console.log('Files already exist in:', filePath, `adding ${item.full_name} to cache`);
+                // console.log('Files already exist in:', filePath, `adding ${item.full_name} to cache`);
                 await this.redisService.sadd('github-repos', item.full_name);
                 return;
             }
 
             const fileSaved = await this.fetchPackageJsonFromGit(item.full_name);
             if (fileSaved) {
+                this.totalReposWithPackageJson++;
                 await fs.outputFile(`${filePath}/github.json`, JSON.stringify(item, null, 2));
+            } else {
+                this.totalReposWithoutPackageJson++;
             }
         }));
 
-        return result;
+        return {
+            ...result,
+            totalReposWithPackageJson: this.totalReposWithPackageJson,
+            totalReposWithoutPackageJson: this.totalReposWithoutPackageJson,
+        };
     }
 
     public fetchPackageJsonFromGit(full_name: string): Promise<boolean> {
@@ -96,27 +110,22 @@ export class GitHubMinerHelper {
 
         return new Promise((resolve) => {
             request.get(fileUrl, {}, async (error: Error, response: Response, body: any) => {
-                // console.log(`Response headers from ${fileUrl}`, response.headers);
-            
                 if (error) {
                     console.log(`error for ${full_name}`, error);
                     return resolve(false);
                 }
                 if (response.statusCode !== 200) {
-                    console.log('non-200 response for:', full_name, {status: response.statusCode});
                     return resolve(false);
                 }
                 if (!body) {
-                    console.log(`no body for ${full_name}`, error);
                     return resolve(false);
                 }
                 try {
                     const json = JSON.parse(body);
                     if (isEmpty(json.dependencies) && isEmpty(json.devDependencies)) {
-                        console.log('No dependencies in package.json for', full_name);
                         return resolve(false);
                     }
-                    console.log('Writing files for:', full_name, 'to path:', filePath);
+                    // console.log('Writing files for:', full_name, 'to path:', filePath);
                     await fs.outputFile(`${filePath}/package.json`, body);
                     await this.redisService.sadd('github-repos', full_name);
                     return resolve(true);

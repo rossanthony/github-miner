@@ -4,7 +4,7 @@ node_modules
 .DS_Store
 logs/*
 data/*
-!data/backups/*
+!data/backups/graph.db.dump
 data/neo4j/*
 !data/neo4j/conf/*
 coverage/*
