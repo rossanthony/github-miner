@@ -17,7 +17,7 @@
     "insert": "ts-node src/insertData.ts",
     "total-repos": "find ./data/repos/* -name 'github.json' | wc -l",
     "total-modules": "find ./data/npm* -name 'data.json' | wc -l",
-    "unit-tests": "jest --forceExit --coverage --verbose --detectOpenHandles",
+    "test": "jest --forceExit --coverage --verbose",
     "clean": "rm -rf ./node_modules && rm -rf ./build",
     "compile": "tsc",
     "compile-watch": "tsc -w",

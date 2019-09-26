@@ -132,12 +132,14 @@ RETURN moduleName, totalDependsOn
 ORDER BY totalDependsOn DESC
 ```
 
-## Most popular devDependencies used by GitRepos
+## Most popular devDependencies used by GitRepos/NodeModules
 ```
 MATCH (n:NodeModule)
-WITH FLOOR(SIZE( (n)<-[:DEV_DEPENDS_ON]-(:GitRepo) )) AS totalDependsOn, n.name as moduleName
-RETURN moduleName, totalDependsOn
-ORDER BY totalDependsOn DESC
+WITH FLOOR(SIZE((n)<-[:DEPENDS_ON]-(:GitRepo))) AS dependedOnByRepos,
+	FLOOR(SIZE((n)<-[:DEPENDS_ON]-(:NodeModule))) AS dependedOnByModules,
+  	n.name as module
+RETURN module, dependedOnByRepos, dependedOnByModules
+ORDER BY dependedOnByModules DESC LIMIT 10
 ```
 
 ## Breakdown of total GitRepo's vs. GitRepo's which are also NodeModules

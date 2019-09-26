@@ -1,11 +1,9 @@
 module.exports = {
-    roots: [
-        "<rootDir>/tests"
-    ],
     globals: {
         "ts-jest": {
-            tsConfig: "tsconfig.json"
-        }
+            tsConfig: "tsconfig.json",
+            diagnostics: false
+        },
     },
     moduleFileExtensions: [
         "ts",
@@ -19,4 +17,7 @@ module.exports = {
     ],
     testEnvironment: "node",
     collectCoverage: true,
+    collectCoverageFrom: [
+        "<rootDir>/src/**/*.ts"
+    ],
 };
