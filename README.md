@@ -46,7 +46,9 @@ RETURN repo, dependencies
 ```
 This should return all node_modules (direct imports and sub-dependencies) of the project.
 
-![Dependency graph for github-miner](/analysis/github-miner-graph.png)
+![Dependency graph for github-miner](/analysis/self-dependency-graph.svg)
+
+For examples of other queries to run [see /documentation/queries.md](/documentation/queries.md).
 
 ## Running unit tests
 
