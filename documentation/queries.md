@@ -125,11 +125,14 @@ CALL algo.scc('NodeModule', 'DEPENDS_ON',
     {write:true,writeProperty:'partition',concurrency:4, graph:'huge'})
 YIELD loadMillis, computeMillis, writeMillis, setCount, maxSetSize, minSetSize
 ```
+
+```
 ╒════════════╤═══════════════╤═════════════╤══════════╤════════════╤════════════╕
 │"loadMillis"│"computeMillis"│"writeMillis"│"setCount"│"maxSetSize"│"minSetSize"│
 ╞════════════╪═══════════════╪═════════════╪══════════╪════════════╪════════════╡
 │77          │860            │23           │56291     │9           │1           │
 └────────────┴───────────────┴─────────────┴──────────┴────────────┴────────────┘
+```
 
 Step 2. Find the top 10 partitions:
 ```
@@ -138,6 +141,7 @@ RETURN n.partition as partition, count(*) as size_of_partition
 ORDER by size_of_partition DESC LIMIT 10
 ```
 
+```
 ╒═══════════╤═══════════════════╕
 │"partition"│"size_of_partition"│
 ╞═══════════╪═══════════════════╡
@@ -161,6 +165,7 @@ ORDER by size_of_partition DESC LIMIT 10
 ├───────────┼───────────────────┤
 │21376      │3                  │
 └───────────┴───────────────────┘
+```
 
 Same as above but including the module names inside each partition:
 ```
@@ -296,6 +301,8 @@ MATCH p=(repo:GitRepo {
 RETURN distinct n1.name as devDependency, count(n2) as numOfDependencies
 ORDER BY numOfDependencies DESC
 ```
+
+```
 ╒══════════════════════════════════╤═══════════╤═══════════════════╕
 │"devDependency"                   │"numOfDeps"│"numOfDistinctDeps"│
 ╞══════════════════════════════════╪═══════════╪═══════════════════╡
@@ -329,6 +336,7 @@ ORDER BY numOfDependencies DESC
 ├──────────────────────────────────┼───────────┼───────────────────┤
 │"@types/redis"                    │1          │1                  │
 └──────────────────────────────────┴───────────┴───────────────────┘
+```
 
 Why does the module "jest" appear so often?
 ```
