@@ -50,8 +50,8 @@ This should return all node_modules (direct imports and sub-dependencies) of the
 
 ## Running unit tests
 
-- Local: `npm run unit-tests`
-- Docker: `npm run docker-exec unit-tests`
+- Local: `npm run test`
+- Docker: `npm run docker-exec test`
 
 ### Structure of data and graph relationships
 
