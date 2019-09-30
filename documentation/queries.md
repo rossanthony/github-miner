@@ -83,19 +83,18 @@ Note: there is no helper function for finding the longest paths, but there are o
 
 For more info [see here](https://neo4j.com/docs/graph-algorithms/current/algorithms/louvain/)
 
+Step 1. run the algorithm and write back results:
 ```
-CALL algo.louvain.stream('NodeModule', 'DEPENDS_ON', {})
-YIELD nodeId, community
-RETURN algo.asNode(nodeId).name AS moduleName, community
-ORDER BY community DESC
+CALL algo.louvain.stream('NodeModule', 'DEPENDS_ON', {
+	write:true, writeProperty:'community'
+}) YIELD nodes, communityCount, iterations, loadMillis, computeMillis, writeMillis;
 ```
 
+Step 2. search for communities with the most members
 ```
-CALL algo.louvain.stream('NodeModule', 'DEPENDS_ON', {})
-YIELD nodeId, community
-MATCH (module:NodeModule) WHERE id(module) = nodeId
-RETURN module.name AS name, community
-ORDER BY community DESC
+MATCH (n:NodeModule)
+RETURN n.community as community, count(*) as size_of_community
+ORDER by size_of_community DESC LIMIT 10
 ```
 
 ## Preferencial attachment
@@ -168,13 +167,6 @@ Same as above but including the module names inside each partition:
 MATCH (n:NodeModule)
 RETURN n.partition as partition, collect(n.name) as modules, count(*) as size_of_partition
 ORDER by size_of_partition DESC LIMIT 20
-```
-
-## Community
-```
-MATCH (n:NodeModule)
-RETURN n.community as community, count(*) as size_of_community
-ORDER by size_of_community DESC LIMIT 10
 ```
 
 ## PageRank
