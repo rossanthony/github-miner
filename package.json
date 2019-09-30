@@ -1,7 +1,7 @@
 {
   "name": "github-miner",
   "version": "0.0.2",
-  "description": "A Node.js app for mining data from github/npm and plotting into a Neo4j graph database.",
+  "description": "A Node.js app written in Typescript for mining data from github/npm and plotting into a Neo4j graph database.",
   "author": "Ross Anthony <rantho01@mail.bbk.ac.uk>",
   "repository": "rossanthony/github-miner",
   "license": "MIT",
